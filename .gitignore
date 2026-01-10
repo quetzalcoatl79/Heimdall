@@ -1,32 +1,131 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# ===========================
+# Heimdall - .gitignore
+# Go Backend + Next.js Frontend
+# ===========================
+
+# ===========================
+# Go / Backend
+# ===========================
+
+# Binaries
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-
-# Test binary, built with `go test -c`
 *.test
+bin/
+dist/
 
-# Code coverage profiles and other test artifacts
+# Coverage & profiling
 *.out
-coverage.*
 *.coverprofile
+coverage.*
 profile.cov
+coverage.html
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
+# Go workspace
 go.work
 go.work.sum
 
-# env file
-.env
+# Vendor (optional)
+# vendor/
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# Buffalo
+.buffalo/
+*.buffalo.lock.json
+
+# ===========================
+# Node.js / Next.js / Frontend
+# ===========================
+
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+.next/
+out/
+build/
+.turbo/
+
+# Cache
+.cache/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# ===========================
+# Environment & Secrets
+# ===========================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+*.pem
+*.key
+secrets/
+
+# ===========================
+# IDE / Editor
+# ===========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ===========================
+# OS Generated
+# ===========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ===========================
+# Docker
+# ===========================
+docker-compose.override.yml
+
+# ===========================
+# Misc
+# ===========================
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+.sass-cache/
+tmp/
+temp/
+
+# Captures WiFi (données sensibles)
+*.cap
+*.pcap
+*.hccapx
+*.22000
+captures/
