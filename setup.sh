@@ -272,9 +272,32 @@ install_wifi_tools() {
     
     case $PKG_MANAGER in
         apt)
+            # Essayer d'abord l'installation standard
             $PKG_INSTALL aircrack-ng reaver pixiewps bully hashcat hcxtools hcxdumptool wifite \
-                wireless-tools iw net-tools macchanger 2>/dev/null || \
-            $PKG_INSTALL aircrack-ng reaver hashcat wireless-tools iw net-tools
+                wireless-tools iw net-tools macchanger 2>/dev/null || {
+                
+                # Si ça échoue, essayer une version minimale
+                warn "Installation complète échouée, tentative minimale..."
+                $PKG_INSTALL aircrack-ng reaver hashcat wireless-tools iw net-tools 2>/dev/null || {
+                    
+                    # Dernier recours : ajouter le repo Kali si on est sur Ubuntu/Debian
+                    if [[ "$DISTRO" == "ubuntu" || "$DISTRO" == "debian" || "$DISTRO" == "linuxmint" ]]; then
+                        warn "Tentative avec le dépôt Kali..."
+                        
+                        # Ajouter le repo Kali si pas déjà présent
+                        if ! grep -q "kali" /etc/apt/sources.list.d/* 2>/dev/null; then
+                            echo "deb http://http.kali.org/kali kali-rolling main non-free contrib" > /etc/apt/sources.list.d/kali.list
+                            wget -q -O - https://archive.kali.org/archive-key.asc | apt-key add - 2>/dev/null || true
+                            $PKG_UPDATE > /dev/null 2>&1 || true
+                        fi
+                        
+                        # Installer depuis Kali
+                        apt-get install -y -t kali-rolling aircrack-ng 2>/dev/null || \
+                        apt-get install -y aircrack-ng 2>/dev/null || \
+                        error "Impossible d'installer aircrack-ng. Installez manuellement : sudo apt install aircrack-ng"
+                    fi
+                }
+            }
             ;;
         dnf)
             $PKG_INSTALL aircrack-ng hashcat wireless-tools iw net-tools
@@ -284,7 +307,12 @@ install_wifi_tools() {
             ;;
     esac
     
-    log "Outils WiFi installés"
+    # Vérifier que aircrack-ng est bien installé
+    if ! command -v airodump-ng &> /dev/null; then
+        error "aircrack-ng n'a pas pu être installé. Le plugin WiFi ne fonctionnera pas.\n   Installez manuellement : sudo apt install aircrack-ng"
+    fi
+    
+    log "Outils WiFi installés (airodump-ng: $(which airodump-ng))"
 }
 
 # Installer les dépendances du projet

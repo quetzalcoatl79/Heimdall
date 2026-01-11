@@ -79,7 +79,7 @@ export function HealthcheckView() {
             <Activity className="h-7 w-7 text-primary-600" />
             État de santé
           </h1>
-          <p className="text-gray-500 mt-1">Surveillance en temps réel de l'application</p>
+          <p className="text-gray-500 mt-1">Surveillance en temps réel de l&apos;application</p>
         </div>
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-2 text-sm text-gray-600">
