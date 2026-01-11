@@ -23,11 +23,11 @@ type PasswordPattern struct {
 	ISP           string   `json:"isp"`
 	RouterModels  []string `json:"router_models,omitempty"`
 	Description   string   `json:"description"`
-	Length        string   `json:"length"`         // e.g., "26", "8-12", "40-50"
-	CharacterSet  string   `json:"character_set"`  // e.g., "hex", "alphanumeric", "latin-words"
-	Format        string   `json:"format"`         // regex or description
+	Length        string   `json:"length"`        // e.g., "26", "8-12", "40-50"
+	CharacterSet  string   `json:"character_set"` // e.g., "hex", "alphanumeric", "latin-words"
+	Format        string   `json:"format"`        // regex or description
 	Example       string   `json:"example"`
-	GeneratorType string   `json:"generator_type"` // "wordlist", "mask", "hybrid"
+	GeneratorType string   `json:"generator_type"`         // "wordlist", "mask", "hybrid"
 	MaskPattern   string   `json:"mask_pattern,omitempty"` // For hashcat masks
 	Notes         string   `json:"notes,omitempty"`
 }
@@ -46,7 +46,7 @@ var knownOUI = map[string]VendorInfo{
 	"E4:9E:12": {Manufacturer: "Freebox", ISP: "Free", Country: "FR"},
 	"20:66:CF": {Manufacturer: "Freebox", ISP: "Free", RouterModel: "Freebox Pop/Delta", Country: "FR"},
 	"22:66:CF": {Manufacturer: "Freebox", ISP: "Free", RouterModel: "Freebox Pop/Delta", Country: "FR"},
-	
+
 	// Orange Livebox
 	"00:1E:74": {Manufacturer: "Sagemcom", ISP: "Orange", RouterModel: "Livebox", Country: "FR"},
 	"30:23:03": {Manufacturer: "Sagemcom", ISP: "Orange", RouterModel: "Livebox", Country: "FR"},
@@ -56,7 +56,7 @@ var knownOUI = map[string]VendorInfo{
 	"A4:3E:51": {Manufacturer: "Sagemcom", ISP: "Orange", RouterModel: "Livebox", Country: "FR"},
 	"E8:AD:A6": {Manufacturer: "Sagemcom", ISP: "Orange", RouterModel: "Livebox", Country: "FR"},
 	"2C:39:96": {Manufacturer: "Sagemcom", ISP: "Orange", RouterModel: "Livebox", Country: "FR"},
-	
+
 	// SFR Box
 	"00:1A:2B": {Manufacturer: "Technicolor", ISP: "SFR", RouterModel: "SFR Box", Country: "FR"},
 	"00:26:91": {Manufacturer: "Sagemcom", ISP: "SFR", RouterModel: "SFR Box", Country: "FR"},
@@ -64,14 +64,14 @@ var knownOUI = map[string]VendorInfo{
 	"44:CE:7D": {Manufacturer: "Sagemcom", ISP: "SFR", RouterModel: "SFR Box", Country: "FR"},
 	"74:9D:DC": {Manufacturer: "Sagemcom", ISP: "SFR", RouterModel: "SFR Box 8", Country: "FR"},
 	"A8:4E:3F": {Manufacturer: "Sagemcom", ISP: "SFR", RouterModel: "SFR Box", Country: "FR"},
-	
+
 	// Bouygues Bbox
 	"00:19:70": {Manufacturer: "Sagemcom", ISP: "Bouygues", RouterModel: "Bbox", Country: "FR"},
 	"00:1F:9F": {Manufacturer: "Sagemcom", ISP: "Bouygues", RouterModel: "Bbox", Country: "FR"},
 	"3C:81:D8": {Manufacturer: "Sagemcom", ISP: "Bouygues", RouterModel: "Bbox", Country: "FR"},
 	"5C:A4:8A": {Manufacturer: "Sagemcom", ISP: "Bouygues", RouterModel: "Bbox", Country: "FR"},
 	"DC:0B:1A": {Manufacturer: "Sagemcom", ISP: "Bouygues", RouterModel: "Bbox", Country: "FR"},
-	
+
 	// Generic routers
 	"00:14:BF": {Manufacturer: "Linksys", Country: "US"},
 	"00:18:39": {Manufacturer: "Cisco-Linksys", Country: "US"},
@@ -171,25 +171,25 @@ var passwordPatterns = map[string]PasswordPattern{
 func LookupVendor(bssid string) VendorInfo {
 	// Normalize BSSID: uppercase, colon-separated
 	bssid = strings.ToUpper(strings.ReplaceAll(bssid, "-", ":"))
-	
+
 	// Extract OUI (first 3 bytes)
 	parts := strings.Split(bssid, ":")
 	if len(parts) < 3 {
 		return VendorInfo{}
 	}
 	oui := strings.Join(parts[:3], ":")
-	
+
 	// Check local cache first
 	if info, ok := knownOUI[oui]; ok {
 		return info
 	}
-	
+
 	// Try online lookup (macvendors.com API)
 	info := lookupOnline(oui)
 	if info.Manufacturer != "" {
 		return info
 	}
-	
+
 	return VendorInfo{Manufacturer: "Unknown"}
 }
 
@@ -197,46 +197,46 @@ func LookupVendor(bssid string) VendorInfo {
 func lookupOnline(oui string) VendorInfo {
 	// Clean OUI for API (remove colons)
 	cleanOUI := strings.ReplaceAll(oui, ":", "")
-	
+
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get("https://api.macvendors.com/" + cleanOUI)
 	if err != nil {
 		return VendorInfo{}
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != 200 {
 		return VendorInfo{}
 	}
-	
+
 	var buf [256]byte
 	n, _ := resp.Body.Read(buf[:])
 	manufacturer := strings.TrimSpace(string(buf[:n]))
-	
+
 	if manufacturer == "" {
 		return VendorInfo{}
 	}
-	
+
 	return VendorInfo{Manufacturer: manufacturer}
 }
 
 // DetectISPFromSSID tries to identify ISP from SSID pattern
 func DetectISPFromSSID(ssid string) string {
 	ssidLower := strings.ToLower(ssid)
-	
+
 	patterns := map[string]*regexp.Regexp{
 		"Free":     regexp.MustCompile(`freebox|free[-_]?wifi|free[-_]?\d`),
 		"Orange":   regexp.MustCompile(`livebox|orange[-_]?\d|orange[-_]?wifi`),
 		"SFR":      regexp.MustCompile(`sfr[-_]?box|sfr[-_]?\d|sfr[-_]?wifi|neufbox`),
 		"Bouygues": regexp.MustCompile(`bbox|bouygues|bytel`),
 	}
-	
+
 	for isp, pattern := range patterns {
 		if pattern.MatchString(ssidLower) {
 			return isp
 		}
 	}
-	
+
 	return ""
 }
 
@@ -252,18 +252,18 @@ func AnalyzeNetwork(bssid, ssid string) map[string]any {
 		"bssid": bssid,
 		"ssid":  ssid,
 	}
-	
+
 	// Get vendor from BSSID
 	vendor := LookupVendor(bssid)
 	result["vendor"] = vendor
-	
+
 	// Try to detect ISP
 	isp := vendor.ISP
 	if isp == "" {
 		isp = DetectISPFromSSID(ssid)
 	}
 	result["isp"] = isp
-	
+
 	// Get password pattern if ISP is known
 	if isp != "" {
 		if pattern, ok := GetPasswordPattern(isp); ok {
@@ -273,7 +273,7 @@ func AnalyzeNetwork(bssid, ssid string) map[string]any {
 			result["has_pattern"] = false
 		}
 	}
-	
+
 	return result
 }
 
@@ -286,30 +286,30 @@ func GenerateWordlistSuggestion(isp string) map[string]any {
 			"message":   "Pattern inconnu pour cet ISP",
 		}
 	}
-	
+
 	suggestion := map[string]any{
 		"available":   true,
 		"isp":         isp,
 		"pattern":     pattern,
 		"description": pattern.Description,
 	}
-	
+
 	switch pattern.GeneratorType {
 	case "mask":
 		suggestion["tool"] = "hashcat"
 		suggestion["command"] = fmt.Sprintf("hashcat -m 22000 -a 3 capture.hc22000 '%s'", pattern.MaskPattern)
 		suggestion["note"] = "Utilisez hashcat avec un masque pour une attaque ciblée"
-		
+
 	case "wordlist-combo":
 		suggestion["tool"] = "custom"
 		suggestion["command"] = "Wordlist de mots latins + règles hashcat"
 		suggestion["note"] = "Pour Freebox: combiner dictionnaire latin avec suffixes"
-		
+
 	default:
 		suggestion["tool"] = "aircrack-ng"
 		suggestion["command"] = "aircrack-ng -w wordlist.txt capture.cap"
 	}
-	
+
 	return suggestion
 }
 
