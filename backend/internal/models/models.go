@@ -49,12 +49,12 @@ func (Role) TableName() string {
 // Plugin represents an installed plugin
 type Plugin struct {
 	BaseModel
-	Name        string `gorm:"uniqueIndex;not null" json:"name"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
-	Enabled     bool   `gorm:"default:false" json:"enabled"`
-	Config      JSON   `gorm:"type:jsonb;default:'{}'" json:"config"`
-	Manifest    JSON   `gorm:"type:jsonb;default:'{}'" json:"manifest"`
+	Name        string    `gorm:"uniqueIndex;not null" json:"name"`
+	Version     string    `json:"version"`
+	Description string    `json:"description"`
+	Enabled     bool      `gorm:"default:false" json:"enabled"`
+	Config      JSON      `gorm:"type:jsonb;default:'{}'" json:"config"`
+	Manifest    JSON      `gorm:"type:jsonb;default:'{}'" json:"manifest"`
 	InstalledAt time.Time `json:"installed_at"`
 }
 
@@ -65,15 +65,15 @@ func (Plugin) TableName() string {
 // Job represents a background job
 type Job struct {
 	BaseModel
-	Queue     string     `gorm:"index;not null" json:"queue"`
-	Type      string     `gorm:"not null" json:"type"`
-	Payload   JSON       `gorm:"type:jsonb;default:'{}'" json:"payload"`
-	Status    string     `gorm:"default:pending;index" json:"status"` // pending, running, completed, failed
-	Attempts  int        `gorm:"default:0" json:"attempts"`
-	MaxRetries int       `gorm:"default:3" json:"max_retries"`
-	Error     string     `json:"error,omitempty"`
-	RunAt     *time.Time `json:"run_at,omitempty"`
-	StartedAt *time.Time `json:"started_at,omitempty"`
+	Queue       string     `gorm:"index;not null" json:"queue"`
+	Type        string     `gorm:"not null" json:"type"`
+	Payload     JSON       `gorm:"type:jsonb;default:'{}'" json:"payload"`
+	Status      string     `gorm:"default:pending;index" json:"status"` // pending, running, completed, failed
+	Attempts    int        `gorm:"default:0" json:"attempts"`
+	MaxRetries  int        `gorm:"default:3" json:"max_retries"`
+	Error       string     `json:"error,omitempty"`
+	RunAt       *time.Time `json:"run_at,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
@@ -83,15 +83,15 @@ func (Job) TableName() string {
 
 // AuditLog tracks important actions
 type AuditLog struct {
-	ID        uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	UserID    *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"`
-	Action    string    `gorm:"not null" json:"action"`
-	Resource  string    `json:"resource"`
-	ResourceID string   `json:"resource_id,omitempty"`
-	Details   JSON      `gorm:"type:jsonb;default:'{}'" json:"details"`
-	IP        string    `json:"ip"`
-	UserAgent string    `json:"user_agent"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	UserID     *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"`
+	Action     string     `gorm:"not null" json:"action"`
+	Resource   string     `json:"resource"`
+	ResourceID string     `json:"resource_id,omitempty"`
+	Details    JSON       `gorm:"type:jsonb;default:'{}'" json:"details"`
+	IP         string     `json:"ip"`
+	UserAgent  string     `json:"user_agent"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 func (AuditLog) TableName() string {
@@ -100,11 +100,11 @@ func (AuditLog) TableName() string {
 
 // RefreshToken for JWT refresh mechanism
 type RefreshToken struct {
-	ID        uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	UserID    uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
-	Token     string    `gorm:"uniqueIndex;not null" json:"-"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	UserID    uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
+	Token     string     `gorm:"uniqueIndex;not null" json:"-"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 

@@ -45,13 +45,13 @@ type WiFiPlugin struct {
 	bruteStartedAt time.Time
 	bruteResult    *BruteforceResult
 	// Deauth state
-	deauthRunning  bool
-	deauthCmd      *exec.Cmd
-	deauthCancel   context.CancelFunc
-	deauthTarget   string
-	deauthBSSID    string
-	deauthCount    int
-	deauthSent     int
+	deauthRunning bool
+	deauthCmd     *exec.Cmd
+	deauthCancel  context.CancelFunc
+	deauthTarget  string
+	deauthBSSID   string
+	deauthCount   int
+	deauthSent    int
 }
 
 // BruteforceResult holds the result of a bruteforce attack
@@ -600,10 +600,10 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 	group.POST("/deauth", func(c buffalo.Context) error {
 		var req struct {
 			Interface string `json:"interface"`
-			BSSID     string `json:"bssid"`     // AP cible
-			Client    string `json:"client"`    // Client MAC (optionnel, FF:FF:FF:FF:FF:FF = broadcast)
-			Count     int    `json:"count"`     // Nombre de paquets (0 = continu)
-			Channel   int    `json:"channel"`   // Canal du réseau
+			BSSID     string `json:"bssid"`   // AP cible
+			Client    string `json:"client"`  // Client MAC (optionnel, FF:FF:FF:FF:FF:FF = broadcast)
+			Count     int    `json:"count"`   // Nombre de paquets (0 = continu)
+			Channel   int    `json:"channel"` // Canal du réseau
 		}
 		_ = json.NewDecoder(c.Request().Body).Decode(&req)
 
@@ -781,7 +781,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 	// Lister les captures depuis la BDD
 	group.GET("/captures", func(c buffalo.Context) error {
 		var captures []models.WifiCapture
-		
+
 		if p.db != nil {
 			// Récupérer les captures depuis la BDD (les plus récentes d'abord)
 			p.db.Order("created_at DESC").Find(&captures)
@@ -916,7 +916,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 
 			args := []string{"-w", req.Wordlist, "-b", req.BSSID, "-l", req.CapturePath + ".key", req.CapturePath}
 			cmd := exec.CommandContext(ctx, "/usr/bin/aircrack-ng", args...)
-			
+
 			p.mu.Lock()
 			p.bruteCmd = cmd
 			p.mu.Unlock()
@@ -935,7 +935,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			}
 
 			outputStr := string(output)
-			
+
 			// Chercher le mot de passe trouvé
 			if strings.Contains(outputStr, "KEY FOUND!") {
 				result.Success = true
@@ -1084,7 +1084,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 				}
 				info, _ := f.Info()
 				path := filepath.Join(dir, f.Name())
-				
+
 				// Compter le nombre de lignes
 				var lineCount int64
 				if info != nil {

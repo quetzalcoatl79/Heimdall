@@ -3,13 +3,13 @@ package ui
 // ViewSchema represents a complete page/view definition that the frontend will render.
 // This is similar to nano-core's template system but uses JSON instead of Django templates.
 type ViewSchema struct {
-	Title       string            `json:"title,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Icon        string            `json:"icon,omitempty"`
-	Actions     []Action          `json:"actions,omitempty"`
-	Components  []Component       `json:"components"`
-	Refresh     *RefreshConfig    `json:"refresh,omitempty"`
-	Meta        map[string]any    `json:"meta,omitempty"`
+	Title       string         `json:"title,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Icon        string         `json:"icon,omitempty"`
+	Actions     []Action       `json:"actions,omitempty"`
+	Components  []Component    `json:"components"`
+	Refresh     *RefreshConfig `json:"refresh,omitempty"`
+	Meta        map[string]any `json:"meta,omitempty"`
 }
 
 // RefreshConfig defines auto-refresh behavior
@@ -59,31 +59,31 @@ type ConfirmDialog struct {
 // ----- Component Type Constants -----
 
 const (
-	ComponentCard       = "card"
-	ComponentTable      = "table"
-	ComponentForm       = "form"
-	ComponentStats      = "stats"
-	ComponentStatItem   = "stat"
-	ComponentAlert      = "alert"
-	ComponentTabs       = "tabs"
-	ComponentTab        = "tab"
-	ComponentGrid       = "grid"
-	ComponentRow        = "row"
-	ComponentCol        = "col"
-	ComponentText       = "text"
-	ComponentHeading    = "heading"
-	ComponentBadge      = "badge"
-	ComponentProgress   = "progress"
-	ComponentList       = "list"
-	ComponentListItem   = "listItem"
-	ComponentDivider    = "divider"
-	ComponentEmpty      = "empty"
-	ComponentSkeleton   = "skeleton"
-	ComponentChart      = "chart"
-	ComponentTimeline   = "timeline"
-	ComponentCodeBlock  = "codeBlock"
-	ComponentJSON       = "json"
-	ComponentCustom     = "custom"
+	ComponentCard      = "card"
+	ComponentTable     = "table"
+	ComponentForm      = "form"
+	ComponentStats     = "stats"
+	ComponentStatItem  = "stat"
+	ComponentAlert     = "alert"
+	ComponentTabs      = "tabs"
+	ComponentTab       = "tab"
+	ComponentGrid      = "grid"
+	ComponentRow       = "row"
+	ComponentCol       = "col"
+	ComponentText      = "text"
+	ComponentHeading   = "heading"
+	ComponentBadge     = "badge"
+	ComponentProgress  = "progress"
+	ComponentList      = "list"
+	ComponentListItem  = "listItem"
+	ComponentDivider   = "divider"
+	ComponentEmpty     = "empty"
+	ComponentSkeleton  = "skeleton"
+	ComponentChart     = "chart"
+	ComponentTimeline  = "timeline"
+	ComponentCodeBlock = "codeBlock"
+	ComponentJSON      = "json"
+	ComponentCustom    = "custom"
 )
 
 // ----- Builder Helpers -----
@@ -403,19 +403,19 @@ func CodeBlock(code, language string) Component {
 type ChartType string
 
 const (
-	ChartLine   ChartType = "line"
-	ChartBar    ChartType = "bar"
-	ChartPie    ChartType = "pie"
-	ChartArea   ChartType = "area"
-	ChartDonut  ChartType = "donut"
-	ChartRadar  ChartType = "radar"
+	ChartLine  ChartType = "line"
+	ChartBar   ChartType = "bar"
+	ChartPie   ChartType = "pie"
+	ChartArea  ChartType = "area"
+	ChartDonut ChartType = "donut"
+	ChartRadar ChartType = "radar"
 )
 
 // ChartSeries represents a data series for the chart
 type ChartSeries struct {
-	Name   string         `json:"name"`
-	Data   []float64      `json:"data"`
-	Color  string         `json:"color,omitempty"`
+	Name  string    `json:"name"`
+	Data  []float64 `json:"data"`
+	Color string    `json:"color,omitempty"`
 }
 
 // ChartConfig represents the configuration for a chart
