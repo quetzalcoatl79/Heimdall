@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"github.com/gobuffalo/buffalo"
+	"github.com/google/uuid"
+	"github.com/nxo/engine/internal/database"
+	"github.com/nxo/engine/internal/models"
 	"github.com/nxo/engine/internal/plugins"
 	"github.com/nxo/engine/internal/ui"
 )
@@ -24,6 +27,7 @@ import (
 type WiFiPlugin struct {
 	startedAt      time.Time
 	mu             sync.Mutex
+	db             *database.DB // Database reference
 	lastScan       []WiFiNetwork
 	lastAt         time.Time
 	captureRunning bool
@@ -31,6 +35,36 @@ type WiFiPlugin struct {
 	captureTargets []string
 	captureCmd     *exec.Cmd
 	captureCancel  context.CancelFunc
+	captureID      uuid.UUID // Current capture DB ID
+	captureStart   time.Time // Capture start time
+	// Bruteforce state
+	bruteRunning   bool
+	bruteCmd       *exec.Cmd
+	bruteCancel    context.CancelFunc
+	bruteCapture   string
+	bruteStartedAt time.Time
+	bruteResult    *BruteforceResult
+	// Deauth state
+	deauthRunning  bool
+	deauthCmd      *exec.Cmd
+	deauthCancel   context.CancelFunc
+	deauthTarget   string
+	deauthBSSID    string
+	deauthCount    int
+	deauthSent     int
+}
+
+// BruteforceResult holds the result of a bruteforce attack
+type BruteforceResult struct {
+	Success   bool      `json:"success"`
+	Password  string    `json:"password,omitempty"`
+	SSID      string    `json:"ssid"`
+	BSSID     string    `json:"bssid"`
+	Capture   string    `json:"capture"`
+	Wordlist  string    `json:"wordlist"`
+	Duration  float64   `json:"duration_seconds"`
+	TestedAt  time.Time `json:"tested_at"`
+	KeysTotal int64     `json:"keys_total,omitempty"`
 }
 
 // WiFiNetwork describes a detected network during scan
@@ -70,6 +104,9 @@ func (p *WiFiPlugin) Manifest() map[string]any {
 
 // RegisterRoutes expose des handlers minimalistes; la logique CLI sera branchée ultérieurement.
 func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
+	// Store DB reference for use in handlers
+	p.db = deps.DB
+
 	// UI schema
 	group.GET("/view", func(c buffalo.Context) error {
 		view := ui.NewView("Pentest Wi-Fi").
@@ -92,17 +129,24 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			),
 		))
 
-		// Tableau des réseaux détectés
+		// Tableau des réseaux détectés avec filtres et tri
 		cols := []ui.TableColumn{
-			{Key: "ssid", Label: "SSID", Sortable: true},
-			{Key: "bssid", Label: "BSSID"},
-			{Key: "channel", Label: "Canal"},
-			{Key: "signal", Label: "Signal (dBm)"},
-			{Key: "security", Label: "Séc."},
-			{Key: "vendor", Label: "Vendor"},
-			{Key: "wps", Label: "WPS"},
+			{Key: "ssid", Label: "SSID", Sortable: true, Filterable: true},
+			{Key: "bssid", Label: "BSSID", Filterable: true},
+			{Key: "channel", Label: "Canal", Sortable: true, Filterable: true, FilterType: "select"},
+			{Key: "signal", Label: "Signal", Sortable: true, Render: "signal"},
+			{Key: "security", Label: "Sécurité", Sortable: true, Filterable: true, FilterType: "select", Render: "badge"},
+			{Key: "vendor", Label: "Vendor", Filterable: true},
+			{Key: "wps", Label: "WPS", Filterable: true, FilterType: "select"},
 		}
-		table := ui.Table(cols, []map[string]any{})
+		table := ui.TableWithOptions(cols, []map[string]any{},
+			ui.TableFilterable(),
+			ui.TableSearchable(),
+			ui.TableSelectable(),
+			ui.TablePaginated(15),
+			ui.TableRowKey("bssid"),
+			ui.TableEmptyMessage("Aucun réseau détecté. Cliquez sur 'Scanner' pour démarrer."),
+		)
 		table.ID = "wifi-networks"
 		view.AddComponent(ui.Card("Réseaux Wi-Fi détectés", table))
 
@@ -115,8 +159,17 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 						ui.TextField("channel", "Canal optionnel"),
 						ui.SelectField("mode", "Mode", []ui.SelectOption{
 							{Value: "wpa", Label: "WPA/WPA2 Handshake"},
+							{Value: "wpa3", Label: "WPA3 (PMKID)"},
 							{Value: "wep", Label: "WEP IVs"},
 						}),
+						ui.SelectField("duration", "Durée", []ui.SelectOption{
+							{Value: "60", Label: "1 minute (test rapide)"},
+							{Value: "300", Label: "5 minutes (WPA2 recommandé)"},
+							{Value: "600", Label: "10 minutes"},
+							{Value: "1800", Label: "30 minutes (WPA3/WEP)"},
+							{Value: "3600", Label: "1 heure"},
+							{Value: "0", Label: "Illimité (arrêt manuel)"},
+						}).WithHelp("WPA2: 5min suffisent. WPA3/WEP: 30min+ recommandé"),
 					},
 					ui.WithSubmitLabel("Lancer la capture"),
 				),
@@ -221,6 +274,24 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			return writeJSON(c, 400, map[string]any{"error": "Aucun BSSID cible"})
 		}
 
+		// Récupérer les infos SSID/Security depuis le dernier scan
+		var targetSSID, targetSecurity string
+		var targetChannel int
+		p.mu.Lock()
+		for _, net := range p.lastScan {
+			for _, target := range req.Targets {
+				if strings.EqualFold(net.BSSID, target) {
+					if targetSSID == "" {
+						targetSSID = net.SSID
+						targetSecurity = net.Security
+						targetChannel = net.Channel
+					}
+					break
+				}
+			}
+		}
+		p.mu.Unlock()
+
 		// Activer le mode monitor sur l'interface
 		// L'interface garde le même nom (iw ne crée pas de nouvelle interface)
 		monitorIface := iface
@@ -241,19 +312,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 		// Trouver le canal des cibles
 		channel := req.Channel
 		if channel == 0 {
-			p.mu.Lock()
-			for _, net := range p.lastScan {
-				for _, target := range req.Targets {
-					if strings.EqualFold(net.BSSID, target) && net.Channel > 0 {
-						channel = net.Channel
-						break
-					}
-				}
-				if channel > 0 {
-					break
-				}
-			}
-			p.mu.Unlock()
+			channel = targetChannel
 		}
 
 		// Créer le répertoire de capture
@@ -262,19 +321,52 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			return writeJSON(c, 500, map[string]any{"error": fmt.Sprintf("Impossible de créer le répertoire de capture: %v", err)})
 		}
 		timestamp := time.Now().Format("20060102_150405")
-		captureFile := fmt.Sprintf("%s/capture_%s", captureDir, timestamp)
+		captureName := fmt.Sprintf("capture_%s", timestamp)
+		captureFile := fmt.Sprintf("%s/%s", captureDir, captureName)
 
 		duration := req.Duration
-		if duration <= 0 {
-			duration = 60 // 60 secondes par défaut
+		// Si duration < 0 (non spécifié), utiliser 5 minutes par défaut
+		// Si duration == 0, c'est illimité (arrêt manuel uniquement)
+		if duration < 0 {
+			duration = 300 // 5 minutes par défaut (recommandé WPA2)
+		}
+
+		// Créer l'enregistrement en base de données
+		startTime := time.Now()
+		capture := models.WifiCapture{
+			SSID:            targetSSID,
+			BSSID:           strings.Join(req.Targets, ","),
+			Channel:         channel,
+			Security:        targetSecurity,
+			CapturePath:     captureFile,
+			CaptureName:     captureName,
+			InterfaceUsed:   monitorIface,
+			DurationSeconds: duration,
+			StartedAt:       &startTime,
+			Status:          "running",
+		}
+		if p.db != nil {
+			if err := p.db.Create(&capture).Error; err != nil {
+				fmt.Printf("[WIFI] Erreur création capture en BDD: %v\n", err)
+			}
 		}
 
 		// Créer le contexte annulable
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(duration)*time.Second)
+		var ctx context.Context
+		var cancel context.CancelFunc
+		if duration == 0 {
+			// Durée illimitée - juste un contexte annulable
+			ctx, cancel = context.WithCancel(context.Background())
+		} else {
+			// Durée limitée
+			ctx, cancel = context.WithTimeout(context.Background(), time.Duration(duration)*time.Second)
+		}
 
 		// Stocker le cancel pour pouvoir arrêter la capture
 		p.mu.Lock()
 		p.captureCancel = cancel
+		p.captureID = capture.ID
+		p.captureStart = startTime
 		p.mu.Unlock()
 
 		// Lancer airodump-ng en background
@@ -285,6 +377,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			p.captureRunning = true
 			p.captureFile = captureFile
 			p.captureTargets = req.Targets
+			captureDBID := p.captureID
 			p.mu.Unlock()
 
 			args := []string{
@@ -314,6 +407,30 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 				fmt.Printf("airodump-ng error: %v\n", err)
 			}
 
+			// Mettre à jour la capture en BDD
+			endTime := time.Now()
+			capFiles, _ := filepath.Glob(captureFile + "*.cap")
+			var fileSize int64
+			hasHandshake := false
+
+			if len(capFiles) > 0 {
+				if info, err := os.Stat(capFiles[0]); err == nil {
+					fileSize = info.Size()
+				}
+				// Vérifier le handshake
+				out, _ := exec.Command("/usr/bin/aircrack-ng", capFiles[0]).Output()
+				hasHandshake = strings.Contains(string(out), "1 handshake")
+			}
+
+			if p.db != nil {
+				p.db.Model(&models.WifiCapture{}).Where("id = ?", captureDBID).Updates(map[string]any{
+					"ended_at":      endTime,
+					"status":        "completed",
+					"file_size":     fileSize,
+					"has_handshake": hasHandshake,
+				})
+			}
+
 			p.mu.Lock()
 			p.captureRunning = false
 			p.captureCmd = nil
@@ -322,12 +439,14 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 		}()
 
 		return writeJSON(c, 200, map[string]any{
-			"status":    "started",
-			"message":   fmt.Sprintf("Capture démarrée sur %d cible(s)", len(req.Targets)),
-			"file":      captureFile,
-			"targets":   req.Targets,
-			"channel":   channel,
-			"interface": monitorIface,
+			"status":     "started",
+			"message":    fmt.Sprintf("Capture démarrée sur %d cible(s)", len(req.Targets)),
+			"file":       captureFile,
+			"targets":    req.Targets,
+			"channel":    channel,
+			"interface":  monitorIface,
+			"ssid":       targetSSID,
+			"capture_id": capture.ID,
 		})
 	})
 
@@ -475,38 +594,274 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 		})
 	})
 
-	// Lister les captures
-	group.GET("/captures", func(c buffalo.Context) error {
-		captureDir := "/opt/heimdall/captures"
-		files, _ := filepath.Glob(captureDir + "/*.cap")
+	// ========== DEAUTH ATTACK ==========
 
-		var captures []map[string]any
-		for _, f := range files {
-			info, err := os.Stat(f)
-			if err != nil {
-				continue
-			}
+	// Lancer une attaque de deauth pour forcer la reconnexion d'un client
+	group.POST("/deauth", func(c buffalo.Context) error {
+		var req struct {
+			Interface string `json:"interface"`
+			BSSID     string `json:"bssid"`     // AP cible
+			Client    string `json:"client"`    // Client MAC (optionnel, FF:FF:FF:FF:FF:FF = broadcast)
+			Count     int    `json:"count"`     // Nombre de paquets (0 = continu)
+			Channel   int    `json:"channel"`   // Canal du réseau
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
 
-			// Vérifier handshake
-			out, _ := exec.Command("/usr/bin/aircrack-ng", f).Output()
-			hasHandshake := strings.Contains(string(out), "handshake")
+		iface := strings.TrimSpace(req.Interface)
+		bssid := strings.TrimSpace(req.BSSID)
 
-			captures = append(captures, map[string]any{
-				"path":          f,
-				"name":          filepath.Base(f),
-				"size":          info.Size(),
-				"modified":      info.ModTime(),
-				"has_handshake": hasHandshake,
-			})
+		if iface == "" {
+			return writeJSON(c, 400, map[string]any{"error": "Interface manquante"})
+		}
+		if bssid == "" {
+			return writeJSON(c, 400, map[string]any{"error": "BSSID cible manquant"})
 		}
 
+		// Client par défaut = broadcast (tous les clients)
+		client := strings.TrimSpace(req.Client)
+		if client == "" {
+			client = "FF:FF:FF:FF:FF:FF"
+		}
+
+		// Nombre de paquets par défaut
+		count := req.Count
+		if count <= 0 {
+			count = 10 // 10 paquets par défaut
+		}
+
+		// Vérifier si un deauth est déjà en cours
+		p.mu.Lock()
+		if p.deauthRunning {
+			p.mu.Unlock()
+			return writeJSON(c, 409, map[string]any{
+				"error":  "Un deauth est déjà en cours",
+				"target": p.deauthBSSID,
+			})
+		}
+		p.deauthRunning = true
+		p.deauthBSSID = bssid
+		p.deauthTarget = client
+		p.deauthCount = count
+		p.deauthSent = 0
+		p.mu.Unlock()
+
+		// S'assurer que l'interface est en mode monitor
+		monitorIface := iface
+		if !strings.HasSuffix(iface, "mon") {
+			// Vérifier si déjà en monitor
+			out, _ := exec.Command("iwconfig", iface).CombinedOutput()
+			if !strings.Contains(string(out), "Mode:Monitor") {
+				// Activer le mode monitor
+				if err := enableMonitorMode(iface); err != nil {
+					p.mu.Lock()
+					p.deauthRunning = false
+					p.mu.Unlock()
+					return writeJSON(c, 500, map[string]any{
+						"error": fmt.Sprintf("Impossible d'activer le mode monitor: %v", err),
+					})
+				}
+			}
+			// Vérifier si airmon-ng a créé une interface "mon"
+			if ifaceExists(iface + "mon") {
+				monitorIface = iface + "mon"
+			}
+		}
+
+		// Changer le canal si spécifié
+		if req.Channel > 0 {
+			iwPath := findTool("iw")
+			exec.Command(iwPath, "dev", monitorIface, "set", "channel", strconv.Itoa(req.Channel)).Run()
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		// Créer le contexte annulable
+		ctx, cancel := context.WithCancel(context.Background())
+		p.mu.Lock()
+		p.deauthCancel = cancel
+		p.mu.Unlock()
+
+		// Lancer aireplay-ng en background
+		go func() {
+			defer func() {
+				p.mu.Lock()
+				p.deauthRunning = false
+				p.deauthCmd = nil
+				p.deauthCancel = nil
+				p.mu.Unlock()
+			}()
+
+			// aireplay-ng --deauth COUNT -a BSSID -c CLIENT INTERFACE
+			args := []string{
+				"--deauth", strconv.Itoa(count),
+				"-a", bssid,
+			}
+			if client != "FF:FF:FF:FF:FF:FF" {
+				args = append(args, "-c", client)
+			}
+			args = append(args, monitorIface)
+
+			fmt.Printf("[WIFI-DEAUTH] Lancement: aireplay-ng %v\n", args)
+
+			cmd := exec.CommandContext(ctx, "/usr/sbin/aireplay-ng", args...)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+			p.mu.Lock()
+			p.deauthCmd = cmd
+			p.mu.Unlock()
+
+			output, err := cmd.CombinedOutput()
+			if err != nil && ctx.Err() == nil {
+				fmt.Printf("[WIFI-DEAUTH] Erreur aireplay-ng: %v\n", err)
+			}
+
+			// Compter les paquets envoyés
+			lines := strings.Split(string(output), "\n")
+			sent := 0
+			for _, line := range lines {
+				if strings.Contains(line, "Sending DeAuth") || strings.Contains(line, "deauthentication") {
+					sent++
+				}
+			}
+
+			p.mu.Lock()
+			p.deauthSent = sent
+			p.mu.Unlock()
+
+			fmt.Printf("[WIFI-DEAUTH] Terminé: %d paquets envoyés vers %s\n", sent, bssid)
+		}()
+
 		return writeJSON(c, 200, map[string]any{
-			"captures": captures,
-			"count":    len(captures),
+			"status":    "started",
+			"message":   fmt.Sprintf("Deauth lancé: %d paquets vers %s", count, bssid),
+			"bssid":     bssid,
+			"client":    client,
+			"count":     count,
+			"interface": monitorIface,
 		})
 	})
 
-	// Bruteforce
+	// Statut du deauth
+	group.GET("/deauth/status", func(c buffalo.Context) error {
+		p.mu.Lock()
+		running := p.deauthRunning
+		bssid := p.deauthBSSID
+		target := p.deauthTarget
+		count := p.deauthCount
+		sent := p.deauthSent
+		p.mu.Unlock()
+
+		return writeJSON(c, 200, map[string]any{
+			"running": running,
+			"bssid":   bssid,
+			"client":  target,
+			"count":   count,
+			"sent":    sent,
+		})
+	})
+
+	// Arrêter le deauth
+	group.POST("/deauth/stop", func(c buffalo.Context) error {
+		p.mu.Lock()
+		wasRunning := p.deauthRunning
+		if p.deauthCancel != nil {
+			p.deauthCancel()
+		}
+		p.deauthRunning = false
+		p.mu.Unlock()
+
+		// Tuer aireplay-ng
+		_ = exec.Command("pkill", "-9", "-f", "aireplay-ng").Run()
+
+		return writeJSON(c, 200, map[string]any{
+			"status":      "stopped",
+			"was_running": wasRunning,
+		})
+	})
+
+	// Lister les captures depuis la BDD
+	group.GET("/captures", func(c buffalo.Context) error {
+		var captures []models.WifiCapture
+		
+		if p.db != nil {
+			// Récupérer les captures depuis la BDD (les plus récentes d'abord)
+			p.db.Order("created_at DESC").Find(&captures)
+		}
+
+		// Enrichir avec les infos fichier actuelles
+		var result []map[string]any
+		for _, cap := range captures {
+			capInfo := map[string]any{
+				"id":            cap.ID,
+				"ssid":          cap.SSID,
+				"bssid":         cap.BSSID,
+				"channel":       cap.Channel,
+				"security":      cap.Security,
+				"path":          cap.CapturePath,
+				"name":          cap.CaptureName,
+				"interface":     cap.InterfaceUsed,
+				"duration":      cap.DurationSeconds,
+				"started_at":    cap.StartedAt,
+				"ended_at":      cap.EndedAt,
+				"status":        cap.Status,
+				"cracked":       cap.Cracked,
+				"password":      cap.CrackedPassword,
+				"has_handshake": cap.HasHandshake,
+				"size":          cap.FileSize,
+			}
+
+			// Vérifier le fichier .cap actuel
+			capFiles, _ := filepath.Glob(cap.CapturePath + "*.cap")
+			if len(capFiles) > 0 {
+				if info, err := os.Stat(capFiles[0]); err == nil {
+					capInfo["size"] = info.Size()
+					capInfo["modified"] = info.ModTime()
+					capInfo["cap_file"] = capFiles[0]
+				}
+				// Revérifier handshake si pas encore marqué
+				if !cap.HasHandshake {
+					out, _ := exec.Command("/usr/bin/aircrack-ng", capFiles[0]).Output()
+					if strings.Contains(string(out), "1 handshake") {
+						capInfo["has_handshake"] = true
+						// Mettre à jour en BDD
+						p.db.Model(&models.WifiCapture{}).Where("id = ?", cap.ID).Update("has_handshake", true)
+					}
+				}
+			}
+
+			result = append(result, capInfo)
+		}
+
+		// Fallback: si pas de captures en BDD, scanner les fichiers
+		if len(result) == 0 {
+			captureDir := "/opt/heimdall/captures"
+			files, _ := filepath.Glob(captureDir + "/*.cap")
+
+			for _, f := range files {
+				info, err := os.Stat(f)
+				if err != nil {
+					continue
+				}
+
+				out, _ := exec.Command("/usr/bin/aircrack-ng", f).Output()
+				hasHandshake := strings.Contains(string(out), "handshake")
+
+				result = append(result, map[string]any{
+					"path":          f,
+					"name":          filepath.Base(f),
+					"size":          info.Size(),
+					"modified":      info.ModTime(),
+					"has_handshake": hasHandshake,
+				})
+			}
+		}
+
+		return writeJSON(c, 200, map[string]any{
+			"captures": result,
+			"count":    len(result),
+		})
+	})
+
+	// Bruteforce - Lancer l'attaque
 	group.POST("/bruteforce", func(c buffalo.Context) error {
 		var req struct {
 			CapturePath string `json:"capture_path"`
@@ -531,23 +886,318 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			return writeJSON(c, 400, map[string]any{"error": "Wordlist introuvable", "path": req.Wordlist})
 		}
 
+		// Vérifier si un bruteforce est déjà en cours
+		p.mu.Lock()
+		if p.bruteRunning {
+			p.mu.Unlock()
+			return writeJSON(c, 409, map[string]any{"error": "Un bruteforce est déjà en cours", "capture": p.bruteCapture})
+		}
+		p.bruteRunning = true
+		p.bruteCapture = req.CapturePath
+		p.bruteStartedAt = time.Now()
+		p.bruteResult = nil
+		p.mu.Unlock()
+
+		// Créer le contexte annulable
+		ctx, cancel := context.WithCancel(context.Background())
+		p.mu.Lock()
+		p.bruteCancel = cancel
+		p.mu.Unlock()
+
 		// Lancer aircrack-ng en background
 		go func() {
-			args := []string{"-w", req.Wordlist, "-b", req.BSSID, req.CapturePath}
-			cmd := exec.Command("/usr/bin/aircrack-ng", args...)
-			output, _ := cmd.Output()
+			defer func() {
+				p.mu.Lock()
+				p.bruteRunning = false
+				p.bruteCmd = nil
+				p.bruteCancel = nil
+				p.mu.Unlock()
+			}()
+
+			args := []string{"-w", req.Wordlist, "-b", req.BSSID, "-l", req.CapturePath + ".key", req.CapturePath}
+			cmd := exec.CommandContext(ctx, "/usr/bin/aircrack-ng", args...)
+			
+			p.mu.Lock()
+			p.bruteCmd = cmd
+			p.mu.Unlock()
+
+			output, err := cmd.CombinedOutput()
+			duration := time.Since(p.bruteStartedAt).Seconds()
+
+			// Parser le résultat
+			result := &BruteforceResult{
+				SSID:     req.SSID,
+				BSSID:    req.BSSID,
+				Capture:  req.CapturePath,
+				Wordlist: req.Wordlist,
+				Duration: duration,
+				TestedAt: time.Now(),
+			}
+
+			outputStr := string(output)
+			
+			// Chercher le mot de passe trouvé
+			if strings.Contains(outputStr, "KEY FOUND!") {
+				result.Success = true
+				// Extraire le mot de passe entre [ ]
+				if idx := strings.Index(outputStr, "KEY FOUND! [ "); idx != -1 {
+					start := idx + len("KEY FOUND! [ ")
+					end := strings.Index(outputStr[start:], " ]")
+					if end != -1 {
+						result.Password = outputStr[start : start+end]
+					}
+				}
+				// Lire aussi le fichier .key créé par -l
+				if keyData, err := os.ReadFile(req.CapturePath + ".key"); err == nil {
+					result.Password = strings.TrimSpace(string(keyData))
+				}
+			}
 
 			// Sauvegarder le résultat
-			resultFile := req.CapturePath + ".result.txt"
-			_ = os.WriteFile(resultFile, output, 0644)
+			p.mu.Lock()
+			p.bruteResult = result
+			p.mu.Unlock()
+
+			// Sauvegarder dans un fichier JSON
+			resultJSON, _ := json.MarshalIndent(result, "", "  ")
+			_ = os.WriteFile(req.CapturePath+".result.json", resultJSON, 0644)
+			_ = os.WriteFile(req.CapturePath+".output.txt", output, 0644)
+
+			// Mettre à jour la capture en BDD si mot de passe trouvé
+			if result.Success && p.db != nil {
+				now := time.Now()
+				p.db.Model(&models.WifiCapture{}).
+					Where("capture_path LIKE ?", strings.TrimSuffix(req.CapturePath, ".cap")+"%").
+					Updates(map[string]any{
+						"cracked":          true,
+						"cracked_password": result.Password,
+						"cracked_at":       now,
+					})
+			}
+
+			if err != nil && ctx.Err() == nil {
+				fmt.Printf("[WIFI-BRUTE] aircrack-ng error: %v\n", err)
+			}
+			if result.Success {
+				fmt.Printf("[WIFI-BRUTE] ✅ MOT DE PASSE TROUVÉ: %s pour %s\n", result.Password, result.SSID)
+			} else {
+				fmt.Printf("[WIFI-BRUTE] ❌ Mot de passe non trouvé pour %s (durée: %.1fs)\n", result.SSID, duration)
+			}
 		}()
 
 		return writeJSON(c, 200, map[string]any{
-			"status":   "started",
-			"message":  "Bruteforce démarré",
-			"capture":  req.CapturePath,
-			"wordlist": req.Wordlist,
+			"status":     "started",
+			"message":    "Bruteforce démarré",
+			"capture":    req.CapturePath,
+			"wordlist":   req.Wordlist,
+			"bssid":      req.BSSID,
+			"started_at": p.bruteStartedAt,
 		})
+	})
+
+	// Bruteforce - Statut
+	group.GET("/bruteforce/status", func(c buffalo.Context) error {
+		p.mu.Lock()
+		running := p.bruteRunning
+		capture := p.bruteCapture
+		startedAt := p.bruteStartedAt
+		result := p.bruteResult
+		p.mu.Unlock()
+
+		response := map[string]any{
+			"running": running,
+			"capture": capture,
+		}
+
+		if running {
+			response["started_at"] = startedAt
+			response["duration"] = time.Since(startedAt).Seconds()
+		}
+
+		if result != nil {
+			response["result"] = result
+		}
+
+		return writeJSON(c, 200, response)
+	})
+
+	// Bruteforce - Arrêter
+	group.POST("/bruteforce/stop", func(c buffalo.Context) error {
+		p.mu.Lock()
+		wasRunning := p.bruteRunning
+		if p.bruteCancel != nil {
+			p.bruteCancel()
+		}
+		p.bruteRunning = false
+		p.mu.Unlock()
+
+		// Tuer le processus aircrack-ng si nécessaire
+		_ = exec.Command("pkill", "-9", "-f", "aircrack-ng").Run()
+
+		return writeJSON(c, 200, map[string]any{
+			"status":      "stopped",
+			"was_running": wasRunning,
+		})
+	})
+
+	// Bruteforce - Résultats sauvegardés
+	group.GET("/bruteforce/results", func(c buffalo.Context) error {
+		captureDir := "/opt/heimdall/captures"
+		files, _ := filepath.Glob(captureDir + "/*.result.json")
+
+		var results []map[string]any
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			var result map[string]any
+			if err := json.Unmarshal(data, &result); err == nil {
+				result["result_file"] = f
+				results = append(results, result)
+			}
+		}
+
+		return writeJSON(c, 200, map[string]any{
+			"results": results,
+			"count":   len(results),
+		})
+	})
+
+	// Wordlists disponibles
+	group.GET("/wordlists", func(c buffalo.Context) error {
+		wordlistDirs := []string{
+			"/opt/heimdall/wordlists",
+			"/usr/share/wordlists",
+			"/usr/share/seclists/Passwords",
+		}
+
+		var wordlists []map[string]any
+		for _, dir := range wordlistDirs {
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				if f.IsDir() {
+					continue
+				}
+				info, _ := f.Info()
+				path := filepath.Join(dir, f.Name())
+				
+				// Compter le nombre de lignes
+				var lineCount int64
+				if info != nil {
+					if info.Size() < 200*1024*1024 { // < 200MB: count exactly
+						if data, err := exec.Command("wc", "-l", path).Output(); err == nil {
+							fmt.Sscanf(string(data), "%d", &lineCount)
+						}
+					} else {
+						// For very large files, estimate (~10 bytes per line average)
+						lineCount = info.Size() / 10
+					}
+				}
+
+				wordlists = append(wordlists, map[string]any{
+					"path":  path,
+					"name":  f.Name(),
+					"size":  info.Size(),
+					"lines": lineCount,
+				})
+			}
+		}
+
+		return writeJSON(c, 200, map[string]any{
+			"wordlists": wordlists,
+			"count":     len(wordlists),
+		})
+	})
+
+	// ========== VENDOR / ISP DETECTION ==========
+
+	// Analyser un réseau (BSSID + SSID) pour identifier le vendeur et le pattern de mot de passe
+	group.POST("/analyze", func(c buffalo.Context) error {
+		var req struct {
+			BSSID string `json:"bssid"`
+			SSID  string `json:"ssid"`
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
+
+		if req.BSSID == "" {
+			return writeJSON(c, 400, map[string]any{"error": "BSSID manquant"})
+		}
+
+		analysis := AnalyzeNetwork(req.BSSID, req.SSID)
+		return writeJSON(c, 200, analysis)
+	})
+
+	// Lookup vendeur par BSSID
+	group.GET("/vendor/{bssid}", func(c buffalo.Context) error {
+		bssid := c.Param("bssid")
+		if bssid == "" {
+			return writeJSON(c, 400, map[string]any{"error": "BSSID manquant"})
+		}
+
+		vendor := LookupVendor(bssid)
+		isp := vendor.ISP
+		if isp == "" {
+			// Essayer de détecter via un SSID passé en query param
+			ssid := c.Request().URL.Query().Get("ssid")
+			if ssid != "" {
+				isp = DetectISPFromSSID(ssid)
+			}
+		}
+
+		result := map[string]any{
+			"bssid":        bssid,
+			"manufacturer": vendor.Manufacturer,
+			"isp":          isp,
+			"router_model": vendor.RouterModel,
+			"country":      vendor.Country,
+		}
+
+		// Ajouter le pattern de mot de passe si ISP connu
+		if isp != "" {
+			if pattern, ok := GetPasswordPattern(isp); ok {
+				result["password_pattern"] = pattern
+				result["suggestion"] = GenerateWordlistSuggestion(isp)
+			}
+		}
+
+		return writeJSON(c, 200, result)
+	})
+
+	// Obtenir tous les patterns de mots de passe connus
+	group.GET("/patterns", func(c buffalo.Context) error {
+		patterns := make([]map[string]any, 0)
+		for isp, pattern := range passwordPatterns {
+			patterns = append(patterns, map[string]any{
+				"isp":            isp,
+				"description":    pattern.Description,
+				"length":         pattern.Length,
+				"character_set":  pattern.CharacterSet,
+				"format":         pattern.Format,
+				"example":        pattern.Example,
+				"generator_type": pattern.GeneratorType,
+				"mask_pattern":   pattern.MaskPattern,
+				"notes":          pattern.Notes,
+			})
+		}
+		return writeJSON(c, 200, map[string]any{
+			"patterns": patterns,
+			"count":    len(patterns),
+		})
+	})
+
+	// Générer une suggestion de wordlist pour un ISP
+	group.GET("/suggest/{isp}", func(c buffalo.Context) error {
+		isp := c.Param("isp")
+		if isp == "" {
+			return writeJSON(c, 400, map[string]any{"error": "ISP manquant"})
+		}
+
+		suggestion := GenerateWordlistSuggestion(isp)
+		return writeJSON(c, 200, suggestion)
 	})
 }
 
@@ -731,6 +1381,14 @@ func parseNmcliScan(out string, iface string) []WiFiNetwork {
 			Security:  securityType,
 			Interface: iface,
 			LastSeen:  time.Now(),
+		}
+
+		// Enrichir avec les infos vendeur
+		vendor := LookupVendor(bssid)
+		if vendor.ISP != "" {
+			network.Vendor = vendor.ISP
+		} else if vendor.Manufacturer != "" {
+			network.Vendor = vendor.Manufacturer
 		}
 
 		results = append(results, network)

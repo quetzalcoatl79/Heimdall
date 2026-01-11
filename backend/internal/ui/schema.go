@@ -154,13 +154,66 @@ func Table(columns []TableColumn, data []map[string]any) Component {
 
 // TableColumn defines a table column
 type TableColumn struct {
-	Key       string `json:"key"`
-	Label     string `json:"label"`
-	Sortable  bool   `json:"sortable,omitempty"`
-	Width     string `json:"width,omitempty"`
-	Align     string `json:"align,omitempty"` // left, center, right
-	Render    string `json:"render,omitempty"` // badge, date, link, etc.
-	ClassName string `json:"className,omitempty"`
+	Key        string `json:"key"`
+	Label      string `json:"label"`
+	Sortable   bool   `json:"sortable,omitempty"`
+	Filterable bool   `json:"filterable,omitempty"`
+	FilterType string `json:"filterType,omitempty"` // text, select
+	Width      string `json:"width,omitempty"`
+	Align      string `json:"align,omitempty"`  // left, center, right
+	Render     string `json:"render,omitempty"` // badge, date, datetime, relative, signal, boolean, link, code, percent
+	ClassName  string `json:"className,omitempty"`
+}
+
+// TableOption is a functional option for configuring tables
+type TableOption func(map[string]any)
+
+// TableFilterable makes the table filterable
+func TableFilterable() TableOption {
+	return func(p map[string]any) { p["filterable"] = true }
+}
+
+// TableSearchable adds a global search bar
+func TableSearchable() TableOption {
+	return func(p map[string]any) { p["searchable"] = true }
+}
+
+// TableSelectable enables row selection
+func TableSelectable() TableOption {
+	return func(p map[string]any) { p["selectable"] = true }
+}
+
+// TablePaginated enables pagination
+func TablePaginated(pageSize int) TableOption {
+	return func(p map[string]any) {
+		p["paginated"] = true
+		p["pageSize"] = pageSize
+	}
+}
+
+// TableRowKey sets the unique key for rows
+func TableRowKey(key string) TableOption {
+	return func(p map[string]any) { p["rowKey"] = key }
+}
+
+// TableEmptyMessage sets the message when no data
+func TableEmptyMessage(msg string) TableOption {
+	return func(p map[string]any) { p["emptyMessage"] = msg }
+}
+
+// TableWithOptions creates a table with options
+func TableWithOptions(columns []TableColumn, data []map[string]any, opts ...TableOption) Component {
+	props := map[string]any{
+		"columns": columns,
+		"data":    data,
+	}
+	for _, opt := range opts {
+		opt(props)
+	}
+	return Component{
+		Type:  ComponentTable,
+		Props: props,
+	}
 }
 
 // TableWithSource creates a table that fetches data from an endpoint
