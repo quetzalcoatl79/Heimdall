@@ -66,26 +66,26 @@ func (WifiNetwork) TableName() string {
 
 // WifiBruteforceResult represents a bruteforce attack result
 type WifiBruteforceResult struct {
-	ID             uuid.UUID      `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
-	CaptureID      *uuid.UUID     `gorm:"type:uuid" json:"capture_id,omitempty"`
-	Capture        *WifiCapture   `gorm:"foreignKey:CaptureID" json:"capture,omitempty"`
-	SSID           string         `json:"ssid"`
-	BSSID          string         `json:"bssid"`
-	CapturePath    string         `json:"capture_path"`
-	WordlistPath   string         `json:"wordlist_path"`
-	WordlistName   string         `json:"wordlist_name"`
-	Success        bool           `gorm:"default:false" json:"success"`
-	Password       string         `json:"password,omitempty"`
-	KeysTested     int64          `json:"keys_tested"`
-	KeysTotal      int64          `json:"keys_total"`
-	DurationSecs   float64        `json:"duration_seconds"`
-	StartedAt      time.Time      `json:"started_at"`
-	CompletedAt    *time.Time     `json:"completed_at,omitempty"`
-	Status         string         `gorm:"default:running" json:"status"` // running, completed, stopped, failed
-	ErrorMessage   string         `json:"error_message,omitempty"`
+	ID           uuid.UUID      `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	CaptureID    *uuid.UUID     `gorm:"type:uuid" json:"capture_id,omitempty"`
+	Capture      *WifiCapture   `gorm:"foreignKey:CaptureID" json:"capture,omitempty"`
+	SSID         string         `json:"ssid"`
+	BSSID        string         `json:"bssid"`
+	CapturePath  string         `json:"capture_path"`
+	WordlistPath string         `json:"wordlist_path"`
+	WordlistName string         `json:"wordlist_name"`
+	Success      bool           `gorm:"default:false" json:"success"`
+	Password     string         `json:"password,omitempty"`
+	KeysTested   int64          `json:"keys_tested"`
+	KeysTotal    int64          `json:"keys_total"`
+	DurationSecs float64        `json:"duration_seconds"`
+	StartedAt    time.Time      `json:"started_at"`
+	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
+	Status       string         `gorm:"default:running" json:"status"` // running, completed, stopped, failed
+	ErrorMessage string         `json:"error_message,omitempty"`
 }
 
 func (WifiBruteforceResult) TableName() string {

@@ -14,8 +14,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // PluginManifest represents the plugin.yaml structure
@@ -59,7 +57,7 @@ func main() {
 				continue
 			}
 			pluginPath := filepath.Join(pluginsDir, entry.Name())
-			
+
 			// Check for plugin.yaml or backend/plugin.go
 			if hasPluginBackend(pluginPath) {
 				plugins = append(plugins, entry.Name())
@@ -75,7 +73,7 @@ func main() {
 				continue
 			}
 			pluginPath := filepath.Join(builtinDir, entry.Name())
-			
+
 			// Check for *.go files
 			if hasGoFiles(pluginPath) {
 				plugins = append(plugins, "builtin/"+entry.Name())
@@ -88,7 +86,7 @@ func main() {
 
 	// Generate the registry file
 	code := generateRegistryCode(plugins)
-	
+
 	// Format the code
 	formatted, err := format.Source([]byte(code))
 	if err != nil {

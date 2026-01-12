@@ -52,7 +52,7 @@ func New(cfg *config.Config) (*Server, error) {
 	// Global middleware
 	app.Use(paramlogger.ParameterLogger)
 	app.Use(contenttype.Set("application/json"))
-	
+
 	// CORS middleware
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:8080"},
