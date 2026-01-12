@@ -84,6 +84,11 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 
+	// Auto-migrate plugin models
+	if err := plugins.AutoMigrateAll(db.DB); err != nil {
+		return nil, err
+	}
+
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService, r)
 	userHandler := handlers.NewUserHandler(userService, r)

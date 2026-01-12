@@ -112,28 +112,7 @@ func (RefreshToken) TableName() string {
 	return "refresh_tokens"
 }
 
-// WifiCapture represents a WiFi pentest capture session
-type WifiCapture struct {
-	BaseModel
-	SSID            string     `gorm:"not null" json:"ssid"`
-	BSSID           string     `gorm:"not null" json:"bssid"`
-	Channel         int        `json:"channel"`
-	Security        string     `json:"security"`
-	CapturePath     string     `gorm:"not null" json:"capture_path"`
-	CaptureName     string     `gorm:"not null" json:"capture_name"`
-	FileSize        int64      `gorm:"default:0" json:"file_size"`
-	HasHandshake    bool       `gorm:"default:false" json:"has_handshake"`
-	InterfaceUsed   string     `json:"interface_used"`
-	DurationSeconds int        `json:"duration_seconds"`
-	StartedAt       *time.Time `json:"started_at"`
-	EndedAt         *time.Time `json:"ended_at"`
-	Status          string     `gorm:"default:running" json:"status"` // running, completed, stopped, failed
-	Cracked         bool       `gorm:"default:false" json:"cracked"`
-	CrackedPassword string     `json:"cracked_password,omitempty"`
-	CrackedAt       *time.Time `json:"cracked_at,omitempty"`
-	Notes           string     `json:"notes,omitempty"`
-}
-
-func (WifiCapture) TableName() string {
-	return "wifi_captures"
-}
+// Note: WiFi-related models (WifiCapture, WifiNetwork, WifiBruteforceResult, WifiDeauthLog)
+// are now defined in the wifi plugin's own models.go file at:
+// internal/plugins/builtin/wifi/models.go
+// This allows each plugin to be fully autonomous with its own database models.

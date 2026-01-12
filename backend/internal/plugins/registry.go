@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/nxo/engine/internal/cache"
 	"github.com/nxo/engine/internal/config"
 	"github.com/nxo/engine/internal/database"
+	"gorm.io/gorm"
 )
 
 // Plugin is a compiled-in extension point.
@@ -26,6 +28,21 @@ type Plugin interface {
 
 	// Manifest returns a JSON-compatible description used by the admin manifest endpoint.
 	Manifest() map[string]any
+}
+
+// PluginWithModels is an optional interface for plugins that have database models.
+// Plugins implementing this interface will have their models auto-migrated on startup.
+type PluginWithModels interface {
+	Plugin
+	// Models returns all GORM models that need to be auto-migrated for this plugin
+	Models() []interface{}
+}
+
+// PluginWithMigrations is an optional interface for plugins that have custom migrations.
+type PluginWithMigrations interface {
+	Plugin
+	// Migrate runs custom migrations for the plugin
+	Migrate(db *gorm.DB) error
 }
 
 type Deps struct {
@@ -63,4 +80,34 @@ func All() []Plugin {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
 	return out
+}
+
+// AutoMigrateAll runs auto-migration for all plugins that implement PluginWithModels.
+// This should be called after database initialization.
+func AutoMigrateAll(db *gorm.DB) error {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	for key, p := range registry {
+		// Check if plugin has models to migrate
+		if pm, ok := p.(PluginWithModels); ok {
+			models := pm.Models()
+			if len(models) > 0 {
+				log.Printf("plugins: auto-migrating %d models for plugin %q", len(models), key)
+				if err := db.AutoMigrate(models...); err != nil {
+					return fmt.Errorf("plugins: failed to migrate models for %s: %w", key, err)
+				}
+			}
+		}
+
+		// Check if plugin has custom migrations
+		if pm, ok := p.(PluginWithMigrations); ok {
+			log.Printf("plugins: running custom migrations for plugin %q", key)
+			if err := pm.Migrate(db); err != nil {
+				return fmt.Errorf("plugins: failed custom migration for %s: %w", key, err)
+			}
+		}
+	}
+
+	return nil
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/gobuffalo/buffalo"
 	"github.com/google/uuid"
 	"github.com/nxo/engine/internal/database"
-	"github.com/nxo/engine/internal/models"
 	"github.com/nxo/engine/internal/plugins"
 	"github.com/nxo/engine/internal/ui"
 )
@@ -83,6 +82,17 @@ type WiFiNetwork struct {
 func (p *WiFiPlugin) Key() string         { return "wifi" }
 func (p *WiFiPlugin) Version() string     { return "0.1.0" }
 func (p *WiFiPlugin) Description() string { return "Pentest Wi-Fi (scan, capture, bruteforce)" }
+
+// Models implements PluginWithModels interface.
+// Returns all GORM models that need to be auto-migrated for this plugin.
+func (p *WiFiPlugin) Models() []interface{} {
+	return []interface{}{
+		&WifiCapture{},
+		&WifiNetwork{},
+		&WifiBruteforceResult{},
+		&WifiDeauthLog{},
+	}
+}
 
 func (p *WiFiPlugin) Manifest() map[string]any {
 	return map[string]any{
@@ -333,7 +343,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 
 		// Créer l'enregistrement en base de données
 		startTime := time.Now()
-		capture := models.WifiCapture{
+		capture := WifiCapture{
 			SSID:            targetSSID,
 			BSSID:           strings.Join(req.Targets, ","),
 			Channel:         channel,
@@ -423,7 +433,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			}
 
 			if p.db != nil {
-				p.db.Model(&models.WifiCapture{}).Where("id = ?", captureDBID).Updates(map[string]any{
+				p.db.Model(&WifiCapture{}).Where("id = ?", captureDBID).Updates(map[string]any{
 					"ended_at":      endTime,
 					"status":        "completed",
 					"file_size":     fileSize,
@@ -780,7 +790,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 
 	// Lister les captures depuis la BDD
 	group.GET("/captures", func(c buffalo.Context) error {
-		var captures []models.WifiCapture
+		var captures []WifiCapture
 
 		if p.db != nil {
 			// Récupérer les captures depuis la BDD (les plus récentes d'abord)
@@ -823,7 +833,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 					if strings.Contains(string(out), "1 handshake") {
 						capInfo["has_handshake"] = true
 						// Mettre à jour en BDD
-						p.db.Model(&models.WifiCapture{}).Where("id = ?", cap.ID).Update("has_handshake", true)
+						p.db.Model(&WifiCapture{}).Where("id = ?", cap.ID).Update("has_handshake", true)
 					}
 				}
 			}
@@ -966,7 +976,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			// Mettre à jour la capture en BDD si mot de passe trouvé
 			if result.Success && p.db != nil {
 				now := time.Now()
-				p.db.Model(&models.WifiCapture{}).
+				p.db.Model(&WifiCapture{}).
 					Where("capture_path LIKE ?", strings.TrimSuffix(req.CapturePath, ".cap")+"%").
 					Updates(map[string]any{
 						"cracked":          true,

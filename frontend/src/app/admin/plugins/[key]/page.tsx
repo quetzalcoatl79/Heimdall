@@ -5,9 +5,9 @@ import { useQuery } from '@tanstack/react-query';
 import { pluginApi } from '@/lib/api/plugins';
 import { apiClient } from '@/lib/api/client';
 import { DynamicRenderer, ViewSchema } from '@/components/ui/DynamicRenderer';
-import { WiFiPentestView } from '@/components/plugins/WiFiPentestView';
+import { getPluginComponent, hasCustomComponent } from '@/lib/plugins/registry';
 import { Plug, AlertCircle, RefreshCw } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 export default function PluginPage() {
   const params = useParams();
@@ -155,9 +155,10 @@ export default function PluginPage() {
     );
   }
 
-  // Use dedicated WiFi component for better UX
-  if (pluginKey === 'wifi') {
-    return <WiFiPentestView />;
+  // Check if plugin has a custom component registered
+  const CustomComponent = getPluginComponent(pluginKey);
+  if (CustomComponent) {
+    return <CustomComponent pluginKey={pluginKey} pluginData={plugin} />;
   }
 
   // If plugin has a view schema, render it dynamically

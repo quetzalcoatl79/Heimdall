@@ -35,7 +35,13 @@ function formatUptime(seconds: number): string {
   return parts.join(' ');
 }
 
-export function HealthcheckView() {
+// Props interface for plugin registry compatibility
+interface HealthcheckViewProps {
+  pluginKey?: string;
+  pluginData?: any;
+}
+
+export function HealthcheckView({ pluginKey, pluginData }: HealthcheckViewProps = {}) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 

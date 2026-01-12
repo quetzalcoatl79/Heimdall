@@ -1,0 +1,95 @@
+name: wifi
+version: 0.1.0
+description: WiFi Pentest - Scan, capture de handshakes et bruteforce WPA/WEP
+author: Heimdall Team
+
+# Dépendances système requises
+system_dependencies:
+  - aircrack-ng
+  - wireless-tools
+  - iw
+  - net-tools
+
+# Dépendances npm pour le frontend
+npm_dependencies:
+  - recharts
+  - lucide-react
+
+# Configuration du menu
+menu:
+  label: "Wi-Fi Pentest"
+  icon: "wifi"
+  position: 120
+
+# Permissions requises
+permissions:
+  - wifi:scan
+  - wifi:capture
+  - wifi:crack
+  - wifi:deauth
+
+# Composant frontend principal
+frontend:
+  main_component: WiFiPentestView
+  # Composants additionnels exportés
+  components:
+    - WiFiNetworkTable
+    - CaptureCard
+    - BruteforcePanel
+
+# Routes API exposées
+routes:
+  - method: GET
+    path: /view
+    description: Retourne le schéma UI dynamique
+  - method: GET
+    path: /interfaces
+    description: Liste les interfaces WiFi
+  - method: POST
+    path: /scan
+    description: Lance un scan WiFi
+  - method: GET
+    path: /scan/results
+    description: Récupère les résultats du dernier scan
+  - method: POST
+    path: /capture
+    description: Démarre une capture de handshakes
+  - method: GET
+    path: /capture/status
+    description: Statut de la capture en cours
+  - method: POST
+    path: /capture/stop
+    description: Arrête la capture
+  - method: POST
+    path: /deauth
+    description: Lance une attaque deauth
+  - method: GET
+    path: /deauth/status
+    description: Statut du deauth
+  - method: POST
+    path: /deauth/stop
+    description: Arrête le deauth
+  - method: GET
+    path: /captures
+    description: Liste les fichiers de capture
+  - method: POST
+    path: /bruteforce
+    description: Lance un bruteforce
+  - method: GET
+    path: /bruteforce/status
+    description: Statut du bruteforce
+  - method: POST
+    path: /bruteforce/stop
+    description: Arrête le bruteforce
+  - method: GET
+    path: /wordlists
+    description: Liste les wordlists disponibles
+  - method: POST
+    path: /analyze
+    description: Analyse un réseau (vendeur, pattern de mot de passe)
+  - method: GET
+    path: /vendor/{bssid}
+    description: Lookup vendeur par BSSID
+  - method: GET
+    path: /patterns
+    description: Liste les patterns de mots de passe connus
