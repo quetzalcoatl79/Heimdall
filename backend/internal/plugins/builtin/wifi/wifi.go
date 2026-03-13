@@ -177,44 +177,44 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			iface, _ = ifaces[0]["name"].(string)
 		}
 
-		       fmt.Printf("[WIFI-SCAN] Lancement du scan sur l'interface: %s\n", iface)
-		       networks, err := scanWiFi(iface)
-		       if err != nil {
-			       fmt.Printf("[WIFI-SCAN] Erreur lors du scan: %v\n", err)
-			       return writeJSON(c, 500, map[string]any{"error": err.Error()})
-		       }
+		fmt.Printf("[WIFI-SCAN] Lancement du scan sur l'interface: %s\n", iface)
+		networks, err := scanWiFi(iface)
+		if err != nil {
+			fmt.Printf("[WIFI-SCAN] Erreur lors du scan: %v\n", err)
+			return writeJSON(c, 500, map[string]any{"error": err.Error()})
+		}
 
-		       fmt.Printf("[WIFI-SCAN] %d réseaux détectés\n", len(networks))
-		       for _, n := range networks {
-			       fmt.Printf("[WIFI-SCAN] Réseau: SSID=%s BSSID=%s Channel=%d Signal=%d\n", n.SSID, n.BSSID, n.Channel, n.Signal)
-		       }
+		fmt.Printf("[WIFI-SCAN] %d réseaux détectés\n", len(networks))
+		for _, n := range networks {
+			fmt.Printf("[WIFI-SCAN] Réseau: SSID=%s BSSID=%s Channel=%d Signal=%d\n", n.SSID, n.BSSID, n.Channel, n.Signal)
+		}
 
-		       // Sauvegarde en mémoire
-		       p.mu.Lock()
-		       p.lastScan = networks
-		       p.lastAt = time.Now()
-		       p.mu.Unlock()
+		// Sauvegarde en mémoire
+		p.mu.Lock()
+		p.lastScan = networks
+		p.lastAt = time.Now()
+		p.mu.Unlock()
 
-		       // Sauvegarde en base (table wifi_networks)
-		       if p.db != nil {
-			       for _, n := range networks {
-				       // Upsert par BSSID + Channel
-				       var existing WifiNetwork
-				       err := p.db.Where("bssid = ? AND channel = ?", n.BSSID, n.Channel).First(&existing).Error
-				       if err == gorm.ErrRecordNotFound {
-					       _ = p.db.Create(&n)
-				       } else if err == nil {
-					       _ = p.db.Model(&existing).Updates(n)
-				       }
-			       }
-		       }
+		// Sauvegarde en base (table wifi_networks)
+		if p.db != nil {
+			for _, n := range networks {
+				// Upsert par BSSID + Channel
+				var existing WifiNetwork
+				err := p.db.Where("bssid = ? AND channel = ?", n.BSSID, n.Channel).First(&existing).Error
+				if err == gorm.ErrRecordNotFound {
+					_ = p.db.Create(&n)
+				} else if err == nil {
+					_ = p.db.Model(&existing).Updates(n)
+				}
+			}
+		}
 
-		       return writeJSON(c, 200, map[string]any{
-			       "status":     "ok",
-			       "count":      len(networks),
-			       "scanned_at": p.lastAt,
-			       "results":    networks,
-		       })
+		return writeJSON(c, 200, map[string]any{
+			"status":     "ok",
+			"count":      len(networks),
+			"scanned_at": p.lastAt,
+			"results":    networks,
+		})
 	})
 
 	// Récupérer les derniers résultats de scan
@@ -1518,7 +1518,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 	group.GET("/wordlists", func(c buffalo.Context) error {
 		// Lister les wordlists connues avec leur statut
 		knownWordlists := ListWordlists()
-		
+
 		// Lister aussi les fichiers locaux non-répertoriés
 		wordlistDirs := []string{
 			GetWordlistsDir(),
@@ -1528,7 +1528,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 
 		var localWordlists []map[string]any
 		seenPaths := make(map[string]bool)
-		
+
 		// Marquer les wordlists connues comme vues
 		for _, wl := range knownWordlists {
 			if wl.LocalPath != "" {
@@ -1547,7 +1547,7 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 				}
 				info, _ := f.Info()
 				path := filepath.Join(dir, f.Name())
-				
+
 				// Skip si déjà dans les wordlists connues
 				if seenPaths[path] {
 					continue
@@ -1578,44 +1578,44 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 		}
 
 		return writeJSON(c, 200, map[string]any{
-			"known":  knownWordlists,
-			"local":  localWordlists,
-			"count":  len(knownWordlists) + len(localWordlists),
+			"known": knownWordlists,
+			"local": localWordlists,
+			"count": len(knownWordlists) + len(localWordlists),
 		})
 	})
-	
+
 	// Télécharger une wordlist
 	group.POST("/wordlists/download", func(c buffalo.Context) error {
 		var req struct {
 			Name string `json:"name"`
 		}
 		_ = json.NewDecoder(c.Request().Body).Decode(&req)
-		
+
 		if req.Name == "" {
 			return writeJSON(c, 400, map[string]any{"error": "Nom de wordlist manquant"})
 		}
-		
+
 		path, err := DownloadWordlist(req.Name)
 		if err != nil {
 			return writeJSON(c, 500, map[string]any{"error": err.Error()})
 		}
-		
+
 		return writeJSON(c, 200, map[string]any{
 			"success": true,
 			"path":    path,
 			"message": fmt.Sprintf("Wordlist %s téléchargée avec succès", req.Name),
 		})
 	})
-	
+
 	// Obtenir les meilleures wordlists pour un ISP donné
 	group.GET("/wordlists/recommend/{isp}", func(c buffalo.Context) error {
 		isp := c.Param("isp")
 		if isp == "" {
 			isp = "unknown"
 		}
-		
+
 		recommended := GetBestWordlistsForISP(isp)
-		
+
 		return writeJSON(c, 200, map[string]any{
 			"isp":         isp,
 			"recommended": recommended,

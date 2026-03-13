@@ -1,4 +1,5 @@
 package captiveportal
+package captiveportal
 
 import (
 	"fmt"

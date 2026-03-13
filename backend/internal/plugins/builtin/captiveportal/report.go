@@ -22,27 +22,27 @@ type CaptivePortalReportConfig struct {
 // CaptivePortalReport contains all data for the report
 type CaptivePortalReport struct {
 	// Meta
-	Config     CaptivePortalReportConfig `json:"config"`
-	GeneratedAt time.Time                `json:"generated_at"`
-	
+	Config      CaptivePortalReportConfig `json:"config"`
+	GeneratedAt time.Time                 `json:"generated_at"`
+
 	// Target info
-	TargetURL     string       `json:"target_url"`
-	TargetName    string       `json:"target_name"`
-	PortalType    string       `json:"portal_type"` // hotel, cafe, airport, etc.
-	Analysis      FormAnalysis `json:"analysis"`
-	
+	TargetURL  string       `json:"target_url"`
+	TargetName string       `json:"target_name"`
+	PortalType string       `json:"portal_type"` // hotel, cafe, airport, etc.
+	Analysis   FormAnalysis `json:"analysis"`
+
 	// Attack summary
 	TotalAttempts   int       `json:"total_attempts"`
 	SuccessfulCodes []string  `json:"successful_codes,omitempty"`
 	StartTime       time.Time `json:"start_time"`
 	EndTime         time.Time `json:"end_time"`
 	Duration        string    `json:"duration"`
-	
+
 	// Bruteforce config used
 	BruteConfig *BruteforceConfig `json:"brute_config,omitempty"`
-	
+
 	// Vulnerability assessment
-	VulnerabilityLevel string   `json:"vulnerability_level"` // Critical, High, Medium, Low
+	VulnerabilityLevel string    `json:"vulnerability_level"` // Critical, High, Medium, Low
 	Findings           []Finding `json:"findings"`
 	Recommendations    []string  `json:"recommendations"`
 }
@@ -60,12 +60,12 @@ type Finding struct {
 type rgbColor struct{ R, G, B int }
 
 var (
-	cpColorPrimary  = rgbColor{41, 128, 185}
-	cpColorDanger   = rgbColor{192, 57, 43}
-	cpColorSuccess  = rgbColor{39, 174, 96}
-	cpColorWarning  = rgbColor{243, 156, 18}
-	cpColorDark     = rgbColor{44, 62, 80}
-	cpColorLight    = rgbColor{236, 240, 241}
+	cpColorPrimary = rgbColor{41, 128, 185}
+	cpColorDanger  = rgbColor{192, 57, 43}
+	cpColorSuccess = rgbColor{39, 174, 96}
+	cpColorWarning = rgbColor{243, 156, 18}
+	cpColorDark    = rgbColor{44, 62, 80}
+	cpColorLight   = rgbColor{236, 240, 241}
 )
 
 // GenerateCaptivePortalReport creates a PDF report
@@ -139,17 +139,17 @@ func addCPTitlePage(pdf *gofpdf.Fpdf, report CaptivePortalReport) {
 	pdf.SetFont("Helvetica", "B", 12)
 	pdf.SetTextColor(cpColorDark.R, cpColorDark.G, cpColorDark.B)
 	pdf.Cell(0, 8, "Client: "+report.Config.ClientName)
-	
+
 	pdf.SetXY(45, pdf.GetY()+10)
 	pdf.SetFont("Helvetica", "", 11)
 	pdf.Cell(0, 7, "Cible: "+report.TargetName)
-	
+
 	pdf.SetXY(45, pdf.GetY()+8)
 	pdf.Cell(0, 7, "URL: "+report.TargetURL)
-	
+
 	pdf.SetXY(45, pdf.GetY()+8)
 	pdf.Cell(0, 7, fmt.Sprintf("Date: %s", report.GeneratedAt.Format("02/01/2006")))
-	
+
 	if report.Config.TesterName != "" {
 		pdf.SetXY(45, pdf.GetY()+8)
 		pdf.Cell(0, 7, "Testeur: "+report.Config.TesterName)
@@ -245,7 +245,7 @@ func addCPPortalAnalysis(pdf *gofpdf.Fpdf, report CaptivePortalReport) {
 	pdf.SetFont("Helvetica", "B", 12)
 	pdf.CellFormat(0, 8, "Détails du formulaire:", "", 1, "L", false, 0, "")
 	pdf.SetFont("Helvetica", "", 11)
-	
+
 	formData := [][]string{
 		{"Titre de la page", analysis.Title},
 		{"Action du formulaire", analysis.FormAction},

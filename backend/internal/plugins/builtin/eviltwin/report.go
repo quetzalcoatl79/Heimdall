@@ -156,7 +156,7 @@ func addETExecutiveSummary(pdf *gofpdf.Fpdf, report EvilTwinReport) {
 	// Risk level
 	pdf.Ln(5)
 	pdf.SetFont("Helvetica", "B", 12)
-	
+
 	var riskLevel, riskColor string
 	if credsCount == 0 {
 		riskLevel = "FAIBLE"
@@ -173,7 +173,7 @@ func addETExecutiveSummary(pdf *gofpdf.Fpdf, report EvilTwinReport) {
 	}
 
 	pdf.CellFormat(0, 8, fmt.Sprintf("Niveau de risque évalué: %s", riskLevel), "", 1, "L", false, 0, "")
-	
+
 	_ = riskColor // Used for potential visual indicator
 }
 
@@ -298,43 +298,43 @@ func addETRecommendations(pdf *gofpdf.Fpdf, report EvilTwinReport) {
 	pdf.SetTextColor(60, 60, 60)
 
 	recommendations := []struct {
-		title string
-		desc  string
+		title    string
+		desc     string
 		priority string
 	}{
 		{
-			title: "1. Implémenter WPA3 ou 802.1X",
-			desc:  "Migrer vers WPA3-Enterprise ou utiliser l'authentification 802.1X (RADIUS) qui rend les attaques Evil Twin inefficaces car le client vérifie l'authenticité du point d'accès.",
+			title:    "1. Implémenter WPA3 ou 802.1X",
+			desc:     "Migrer vers WPA3-Enterprise ou utiliser l'authentification 802.1X (RADIUS) qui rend les attaques Evil Twin inefficaces car le client vérifie l'authenticité du point d'accès.",
 			priority: "HAUTE",
 		},
 		{
-			title: "2. Utiliser des certificats côté client",
-			desc:  "Déployer des certificats sur les appareils des utilisateurs pour authentifier le réseau WiFi. Cela empêche la connexion à des réseaux non autorisés.",
+			title:    "2. Utiliser des certificats côté client",
+			desc:     "Déployer des certificats sur les appareils des utilisateurs pour authentifier le réseau WiFi. Cela empêche la connexion à des réseaux non autorisés.",
 			priority: "HAUTE",
 		},
 		{
-			title: "3. Désactiver la connexion automatique",
-			desc:  "Configurer les appareils pour ne pas se connecter automatiquement aux réseaux connus. L'utilisateur doit valider manuellement chaque connexion.",
+			title:    "3. Désactiver la connexion automatique",
+			desc:     "Configurer les appareils pour ne pas se connecter automatiquement aux réseaux connus. L'utilisateur doit valider manuellement chaque connexion.",
 			priority: "MOYENNE",
 		},
 		{
-			title: "4. Sensibilisation des utilisateurs",
-			desc:  "Former les utilisateurs à reconnaître les signes d'un réseau malveillant: déconnexions répétées, portail captif inattendu, certificat invalide.",
+			title:    "4. Sensibilisation des utilisateurs",
+			desc:     "Former les utilisateurs à reconnaître les signes d'un réseau malveillant: déconnexions répétées, portail captif inattendu, certificat invalide.",
 			priority: "HAUTE",
 		},
 		{
-			title: "5. Surveillance réseau",
-			desc:  "Déployer un système de détection d'intrusion sans fil (WIDS) capable de détecter les points d'accès pirates et les attaques de déauthentification.",
+			title:    "5. Surveillance réseau",
+			desc:     "Déployer un système de détection d'intrusion sans fil (WIDS) capable de détecter les points d'accès pirates et les attaques de déauthentification.",
 			priority: "MOYENNE",
 		},
 		{
-			title: "6. Utiliser un VPN",
-			desc:  "Imposer l'utilisation d'un VPN d'entreprise qui chiffre tout le trafic, même si l'utilisateur se connecte à un réseau compromis.",
+			title:    "6. Utiliser un VPN",
+			desc:     "Imposer l'utilisation d'un VPN d'entreprise qui chiffre tout le trafic, même si l'utilisateur se connecte à un réseau compromis.",
 			priority: "MOYENNE",
 		},
 		{
-			title: "7. Réinitialiser les mots de passe compromis",
-			desc:  "Les utilisateurs dont les identifiants ont été capturés lors de ce test doivent immédiatement changer leurs mots de passe.",
+			title:    "7. Réinitialiser les mots de passe compromis",
+			desc:     "Les utilisateurs dont les identifiants ont été capturés lors de ce test doivent immédiatement changer leurs mots de passe.",
 			priority: "CRITIQUE",
 		},
 	}

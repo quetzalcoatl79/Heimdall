@@ -53,9 +53,11 @@ func init() {
 	plugins.Register(&CaptivePortalPlugin{})
 }
 
-func (p *CaptivePortalPlugin) Key() string         { return "captiveportal" }
-func (p *CaptivePortalPlugin) Version() string     { return "2.0.0" }
-func (p *CaptivePortalPlugin) Description() string { return "Pentest des portails captifs avec analyse, bruteforce avancé et rapports" }
+func (p *CaptivePortalPlugin) Key() string     { return "captiveportal" }
+func (p *CaptivePortalPlugin) Version() string { return "2.0.0" }
+func (p *CaptivePortalPlugin) Description() string {
+	return "Pentest des portails captifs avec analyse, bruteforce avancé et rapports"
+}
 
 func (p *CaptivePortalPlugin) Manifest() map[string]any {
 	return map[string]any{
@@ -129,15 +131,15 @@ func (p *CaptivePortalPlugin) View(c buffalo.Context) error {
 			{Key: "maxLength", Label: "Max"},
 			{Key: "pattern", Label: "Pattern"},
 		}
-		
+
 		infoItems := []ui.Component{
 			ui.Text(fmt.Sprintf("URL: %s", lastAnalysis.URL)),
 			ui.Text(fmt.Sprintf("Titre: %s", lastAnalysis.Title)),
 			ui.Text(fmt.Sprintf("Méthode: %s → %s", lastAnalysis.FormMethod, lastAnalysis.FormAction)),
 			ui.Text(fmt.Sprintf("CSRF: %v | Captcha: %v", lastAnalysis.HasCSRF, lastAnalysis.HasCaptcha)),
 		}
-		
-		view.AddComponent(ui.Card("Résultat de l'analyse", 
+
+		view.AddComponent(ui.Card("Résultat de l'analyse",
 			append(infoItems, ui.Table(columns, analysisData))...,
 		))
 	}
@@ -220,7 +222,7 @@ func (p *CaptivePortalPlugin) View(c buffalo.Context) error {
 		view.AddComponent(ui.Card("Progression Bruteforce",
 			ui.Table(progressColumns, progressData),
 		))
-		
+
 		if len(progress.FoundCodes) > 0 {
 			codesData := make([]map[string]any, len(progress.FoundCodes))
 			for i, code := range progress.FoundCodes {
