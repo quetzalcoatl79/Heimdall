@@ -5,8 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { pluginApi } from '@/lib/api/plugins';
 import { apiClient } from '@/lib/api/client';
 import { DynamicRenderer, ViewSchema } from '@/components/ui/DynamicRenderer';
-import { getPluginComponent, hasCustomComponent } from '@/lib/plugins/registry';
-import { Plug, AlertCircle, RefreshCw } from 'lucide-react';
+import { getPluginComponent } from '@/lib/plugins/registry';
+import { Plug, AlertCircle } from 'lucide-react';
 import { useMemo } from 'react';
 
 export default function PluginPage() {
@@ -66,48 +66,20 @@ export default function PluginPage() {
     },
   });
 
-  // WiFi-specific: fetch interfaces and inject options into the select field
-  const { data: wifiInterfaces } = useQuery({
-    queryKey: ['plugin', pluginKey, 'interfaces'],
-    queryFn: async () => {
-      const res = await apiClient.get(`/plugins/${pluginKey}/interfaces`);
-      return res.data?.interfaces ?? [];
-    },
-    enabled: pluginKey === 'wifi' && !!viewSchema,
-    refetchInterval: 10000,
-  });
-
   const schemaToRender = useMemo(() => {
-    if (pluginKey !== 'wifi' || !viewSchema || !wifiInterfaces) {
+    if (pluginKey !== 'wifi' || !viewSchema) {
       return viewSchema;
     }
 
-    const options = [
-      { value: '', label: 'Choisir', disabled: true },
-      ...wifiInterfaces.map((iface: any) => ({
-        value: iface.name,
-        label: `${iface.name}${iface.monitor ? ' [monitor]' : ''}${iface.driver ? ` (${iface.driver})` : ''}`,
-        disabled: iface.up === false,
-      })),
-    ];
-
     const patchComponents = (components: any[]): any[] =>
       components.map((component) => {
-        if (component.type === 'form' && component.props?.id === 'wifi-select-iface') {
-          const patchedFields = (component.props.fields || []).map((field: any) =>
-            field.name === 'interface'
-              ? { ...field, options, default: options.find((o) => !o.disabled)?.value || '' }
-              : field
-          );
-          return { ...component, props: { ...component.props, fields: patchedFields } };
-        }
-
+        // Patche le tableau des réseaux avec les résultats du scan (polling)
         if (component.type === 'table' && component.id === 'wifi-networks') {
           return {
             ...component,
             props: {
               ...(component.props || {}),
-              data: scanResults?.results || [],
+              data: scanResults?.results || component.props?.data || [],
             },
           };
         }
@@ -119,7 +91,7 @@ export default function PluginPage() {
       });
 
     return { ...viewSchema, components: patchComponents(viewSchema.components) } as ViewSchema;
-  }, [pluginKey, viewSchema, wifiInterfaces, scanResults]);
+  }, [pluginKey, viewSchema, scanResults]);
 
   const isLoading = pluginsLoading || viewLoading;
 
@@ -164,44 +136,20 @@ export default function PluginPage() {
   // If plugin has a view schema, render it dynamically
   if (schemaToRender) {
     return (
-      <div className="relative">
-        {/* Refresh indicator */}
-        {schemaToRender.refresh?.enabled && (
-          <div className="absolute top-0 right-0 flex items-center gap-2 text-sm text-gray-500">
-            <RefreshCw className="h-4 w-4 animate-spin-slow" />
-            Auto-refresh: {schemaToRender.refresh.interval}s
-          </div>
-        )}
+      <div>
         <DynamicRenderer 
           schema={schemaToRender} 
+          onRefresh={() => {
+            refetchView();
+            refetchScanResults();
+          }}
           onAction={(actionId) => {
-            if (pluginKey !== 'wifi') return;
-
-            const getSelectedInterface = () => {
-              const form = document.getElementById('wifi-select-iface') as HTMLFormElement | null;
-              if (form) {
-                const data = new FormData(form);
-                const iface = (data.get('interface') as string) || '';
-                if (iface) return iface;
-              }
-              const first = wifiInterfaces?.find((i: any) => !i.up === false) || wifiInterfaces?.[0];
-              return first?.name || '';
-            };
-
-            const iface = getSelectedInterface();
-
+            // Actions sans endpoint sont gérées ici
             if (actionId === 'refresh') {
               refetchView();
               refetchScanResults();
-              return;
             }
-
-            if (actionId === 'scan') {
-              apiClient
-                .post(`/plugins/${pluginKey}/scan`, { interface: iface })
-                .then(() => refetchScanResults())
-                .catch(() => {});
-            }
+            // Les autres actions avec endpoint sont gérées directement par ButtonComponent
           }}
         />
       </div>

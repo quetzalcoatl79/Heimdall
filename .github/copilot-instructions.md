@@ -1,108 +1,80 @@
 # Heimdall AI Coding Instructions
 
-Heimdall is a plugin-based WiFi pentesting platform with a Go backend and Next.js frontend. The architecture enables dynamic UI generation where backend plugins define JSON schemas that the frontend renders.
+Heimdall is a plugin-based WiFi pentesting platform with a Go/Buffalo backend and Next.js 14 frontend. Backend plugins define JSON UI schemas that the frontend's `DynamicRenderer` interprets.
 
-## Architecture Overview
+## Architecture: Plugin System
 
-### Plugin System (Compile-Time, Not Runtime)
-- **Critical**: Go plugins are compiled into the binary, not loaded at runtime (see [internal/plugins/registry.go](../backend/internal/plugins/registry.go))
-- New plugins must be registered in `backend/internal/plugins/builtin/builtin.go` and imported to trigger `init()`
-- Each plugin implements: `Key()`, `Version()`, `Description()`, `RegisterRoutes()`, `Manifest()`
-- Routes are auto-mounted at `/api/v1/plugins/{pluginKey}` via [internal/plugins/mount.go](../backend/internal/plugins/mount.go)
-- Middleware `RequireEnabled()` gates plugin access based on DB state ([internal/plugins/enabled_middleware.go](../backend/internal/plugins/enabled_middleware.go))
+**Compile-time plugins (NOT runtime loaded):**
+1. Create struct in `backend/internal/plugins/builtin/{name}/{name}.go` implementing `Plugin` interface
+2. Register via blank import in [builtin/builtin.go](../backend/internal/plugins/builtin/builtin.go): `_ "github.com/nxo/engine/internal/plugins/builtin/{name}"`
+3. Plugin `init()` calls `plugins.Register(p)` - routes auto-mount at `/api/v1/plugins/{key}`
+4. Implement optional `PluginWithModels` interface to auto-migrate GORM models on startup
 
-### UI Schema System (Backend-Driven)
-- Backend plugins return JSON schemas via `/view` endpoints (see [internal/ui/schema.go](../backend/internal/ui/schema.go))
-- Frontend [DynamicRenderer.tsx](../frontend/src/components/ui/DynamicRenderer.tsx) interprets schemas to render components
-- Component types: `card`, `table`, `form`, `stats`, `alert`, `tabs`, `grid`, `badge`, `progress`
-- Example: [wifi/wifi.go](../backend/internal/plugins/builtin/wifi/wifi.go) demonstrates `ui.Card()`, `ui.Form()`, `ui.Table()` builders
-
-### Worker System (Redis-Based)
-- Workers use Redis for job queuing and coordination (see [internal/workers/manager.go](../backend/internal/workers/manager.go))
-- Jobs are enqueued with handlers registered via `RegisterHandler(jobType string, handler JobHandler)`
-- Worker heartbeats stored at `workers:heartbeat` key with 30s expiry
-- Start worker process via `cmd/worker/main.go`, separate from API server
-
-## Development Workflow
-
-### Local Setup Commands
-```bash
-# Start infrastructure (run once)
-docker compose up -d postgres redis
-
-# Development mode (backend + frontend + worker)
-./run_heimdall.sh --dev
-
-# Production mode (systemd services)
-sudo ./run_heimdall.sh --prod
+```go
+// Required interface (registry.go)
+type Plugin interface {
+    Key() string; Version() string; Description() string
+    RegisterRoutes(group *buffalo.App, deps Deps)
+    Manifest() map[string]any  // menu_items, permissions
+}
 ```
 
-### Key Make Targets
-- `make dev` - Full stack development mode
-- `make migrate` - Run DB migrations
-- `make backend` - Run Go API server (port 8080)
-- `make frontend` - Run Next.js dev server (port 3000)
+## Architecture: Backend-Driven UI
 
-### Environment Variables
-Default config in [backend/internal/config/config.go](../backend/internal/config/config.go):
-- `DB_HOST=localhost`, `DB_PORT=5433`, `DB_NAME=engine_dev`
-- `REDIS_HOST=localhost`, `REDIS_PORT=6379`
-- `APP_PORT=8080`, `APP_ENV=development`
+Plugins return JSON schemas via `/view` endpoints → frontend [DynamicRenderer.tsx](../frontend/src/components/ui/DynamicRenderer.tsx) renders them.
+
+```go
+// Example: wifi/view.go pattern
+view := ui.NewView("Title").WithIcon("wifi").WithRefresh(10)
+view.AddComponent(ui.Card("Header", ui.Table(columns, data)))
+view.AddAction(ui.Action{ID: "scan", Label: "Scan", Variant: "primary"})
+return writeJSON(c, 200, view)
+```
+
+Component types: `card`, `table`, `form`, `stats`, `tabs`, `grid`, `badge`, `progress`, `chart`, `modal`, `button`
+
+**Custom React components** (only when schema insufficient): Register in [frontend/src/lib/plugins/registry.tsx](../frontend/src/lib/plugins/registry.tsx)
+
+## Development Commands
+
+```bash
+docker compose up -d postgres redis    # Infrastructure (ports 5433, 6379)
+make dev                               # Full stack (backend:8080, frontend:3000, worker)
+make migrate                           # Run DB migrations
+make docker-debug                      # + Adminer:8082, Redis Commander:8081
+```
 
 ## Code Conventions
 
-### Backend (Go)
-- **Buffalo framework**: Routes use `buffalo.Context`, handlers return `error`
-- **Module path**: `github.com/nxo/engine` (not heimdall - legacy rename)
-- **DB access**: Use `*database.DB` wrapper, not raw GORM
-- **JSON types**: Use `models.JSON` (jsonb) for flexible plugin data storage
-- **Middleware**: JWT auth via [internal/middleware/middleware.go](../backend/internal/middleware/middleware.go)
+**Backend (Go):**
+- Module: `github.com/nxo/engine` (legacy name, not heimdall)
+- Use `*database.DB` wrapper, `models.JSON` for jsonb columns
+- Handlers return `error`, use `writeJSON(c, status, payload)`
+- JWT middleware in [internal/middleware/middleware.go](../backend/internal/middleware/middleware.go)
 
-### Frontend (Next.js 14)
-- **API client**: [lib/api/client.ts](../frontend/src/lib/api/client.ts) has auto-refresh interceptor for JWT tokens
-- **Auth state**: Zustand store at [lib/store/auth.ts](../frontend/src/lib/store/auth.ts), uses `js-cookie` for token storage
-- **i18n**: Messages in [lib/i18n/messages.ts](../frontend/src/lib/i18n/messages.ts), switch via `LanguageSwitcher`
-- **Admin layout**: Protected routes under `/admin` with sidebar navigation
+**Frontend (Next.js 14):**
+- API client with JWT refresh: [lib/api/client.ts](../frontend/src/lib/api/client.ts)
+- Auth state: Zustand store + `js-cookie` for tokens
+- i18n: Messages in [lib/i18n/messages.ts](../frontend/src/lib/i18n/messages.ts) (fr/en)
+- Plugin pages: `/admin/plugins/[key]` routes to dynamic renderer
 
-### Plugin Development Pattern
-1. Create plugin struct in `backend/internal/plugins/builtin/{name}/{name}.go`
-2. Implement `Plugin` interface methods
-3. Register in `builtin/builtin.go`: `plugins.Register(&yourplugin.YourPlugin{})`
-4. Define routes that return UI schemas using `ui.NewView()` builders
-5. Add menu items in `Manifest()` for navigation sidebar
+## Key Files
 
-### UI Schema Builder Functions
-```go
-// Create views with auto-refresh
-view := ui.NewView("Title").WithDescription("desc").WithRefresh(5)
+| Purpose | Path |
+|---------|------|
+| API entrypoint | `backend/cmd/api/main.go` |
+| Route setup & CORS | `backend/internal/server/server.go` |
+| UI schema builders | `backend/internal/ui/schema.go`, `forms.go` |
+| Plugin registry | `backend/internal/plugins/registry.go` |
+| Dynamic UI renderer | `frontend/src/components/ui/DynamicRenderer.tsx` |
+| Plugin page router | `frontend/src/app/admin/plugins/[key]/page.tsx` |
+| WiFi plugin (example) | `backend/internal/plugins/builtin/wifi/` |
 
-// Add components
-view.AddComponent(ui.Card("Header", 
-    ui.Table(columns, data),
-    ui.Form("id", fields),
-))
+## Environment (defaults in config.go)
 
-// Add actions (buttons)
-view.AddAction(ui.Action{ID: "scan", Label: "Start Scan", Icon: "radar"})
-```
+`DB_HOST=localhost` `DB_PORT=5433` `DB_NAME=engine_dev` `REDIS_PORT=6379` `APP_PORT=8080`
 
-## Critical Files
+## Security Notes
 
-- [backend/cmd/api/main.go](../backend/cmd/api/main.go) - API server entrypoint
-- [backend/cmd/worker/main.go](../backend/cmd/worker/main.go) - Background worker entrypoint  
-- [backend/internal/server/server.go](../backend/internal/server/server.go) - Buffalo app initialization, CORS, routes
-- [frontend/src/app/admin/plugins/[key]/page.tsx](../frontend/src/app/admin/plugins/[key]/page.tsx) - Dynamic plugin page renderer
-- [docker-compose.yml](../docker-compose.yml) - Local infra (postgres:5433, redis:6379)
-
-## Testing & Debugging
-
-- **Debug containers**: `make docker-debug` starts Adminer (port 8082) and Redis Commander (port 8081)
-- **Logs**: Development logs to stdout; production uses `/opt/heimdall/logs/`
-- **PID files**: Production mode writes to `/var/run/heimdall/`
-
-## Security Context
-
-- Platform designed for Kali Linux/Parrot OS (pentest distros)
-- WiFi plugin requires root for monitor mode operations
-- JWT tokens stored in secure, httpOnly cookies
-- Default admin password set via migration `000002_update_admin_password.up.sql`
+- Designed for Kali/Parrot (pentest distros); WiFi features require root/monitor mode
+- Default admin: `admin@heimdall.local` / `admin123` (migration 000002)

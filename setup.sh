@@ -400,25 +400,75 @@ EOF
 # Créer les répertoires
 setup_directories() {
     step "Création des répertoires"
+
+    WORDLISTS_DIR_DEFAULT="/opt/heimdall/wordlists"
+    WORDLISTS_DIR_EFFECTIVE="$WORDLISTS_DIR_DEFAULT"
+    if [ -n "${WORDLISTS_DIR}" ]; then
+        WORDLISTS_DIR_EFFECTIVE="$WORDLISTS_DIR"
+    elif [ -n "${HEIMDALL_ROOT}" ]; then
+        WORDLISTS_DIR_EFFECTIVE="$HEIMDALL_ROOT/wordlists"
+    fi
     
     mkdir -p /opt/heimdall/captures
-    mkdir -p /opt/heimdall/wordlists
+    mkdir -p "$WORDLISTS_DIR_EFFECTIVE"
     mkdir -p /opt/heimdall/logs
     
     # Télécharger rockyou si absent
-    if [ ! -f /opt/heimdall/wordlists/rockyou.txt ]; then
+    if [ ! -f "$WORDLISTS_DIR_EFFECTIVE/rockyou.txt" ]; then
         if [ -f /usr/share/wordlists/rockyou.txt.gz ]; then
             info "Extraction de rockyou.txt..."
-            gunzip -c /usr/share/wordlists/rockyou.txt.gz > /opt/heimdall/wordlists/rockyou.txt
+            gunzip -c /usr/share/wordlists/rockyou.txt.gz > "$WORDLISTS_DIR_EFFECTIVE/rockyou.txt"
         elif [ -f /usr/share/wordlists/rockyou.txt ]; then
-            cp /usr/share/wordlists/rockyou.txt /opt/heimdall/wordlists/
+            cp /usr/share/wordlists/rockyou.txt "$WORDLISTS_DIR_EFFECTIVE/"
         fi
+    fi
+
+    # Télécharger / mettre à jour des wordlists (FR/EN/ES) depuis Git
+    if [ "${WORDLISTS_AUTO_DOWNLOAD:-1}" = "1" ]; then
+        info "Téléchargement des wordlists (FR/EN/ES)"
+
+        download_wordlist() {
+            local name="$1"
+            local url="$2"
+            local dest="$WORDLISTS_DIR_EFFECTIVE/$name"
+
+            if command -v curl &> /dev/null; then
+                if [ -f "$dest" ]; then
+                    curl -L -z "$dest" -o "$dest" "$url" || true
+                else
+                    curl -L -o "$dest" "$url" || true
+                fi
+            elif command -v wget &> /dev/null; then
+                wget -q -N -O "$dest" "$url" || true
+            else
+                warn "curl/wget introuvable, skip téléchargement wordlists"
+            fi
+        }
+
+        # FR
+        download_wordlist "french-common-password-list-top-5000.txt" \
+            "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/Language-Specific/French-common-password-list-top-5000.txt"
+
+        # EN (général)
+        download_wordlist "top1575-probable-v2.txt" \
+            "https://github.com/berzerk0/Probable-Wordlists/raw/master/Real-Passwords/Top1575-probable-v2.txt"
+
+        # ES
+        download_wordlist "Spanish_1000-common-usernames-and-passwords.txt" \
+            "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/Language-Specific/Spanish_1000-common-usernames-and-passwords.txt"
+
+        # WiFi common (petit, utile)
+        download_wordlist "wifi-common.txt" \
+            "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/WiFi-WPA/wifi-common.txt"
+    else
+        info "Téléchargement wordlists désactivé (WORDLISTS_AUTO_DOWNLOAD=0)"
     fi
     
     # Permissions
     REAL_USER=${SUDO_USER:-$USER}
     if [ "$REAL_USER" != "root" ]; then
         chown -R "$REAL_USER:$REAL_USER" /opt/heimdall
+        chown -R "$REAL_USER:$REAL_USER" "$WORDLISTS_DIR_EFFECTIVE"
     fi
     
     log "Répertoires créés"

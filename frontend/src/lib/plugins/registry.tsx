@@ -36,17 +36,20 @@ const NotFoundComponent = ({ pluginKey }: { pluginKey: string }) => (
 
 // Registry of plugin components
 // Each plugin can register its main view component here
+// NOTE: Plugins should use the backend schema-driven UI system (DynamicRenderer)
+// Only add entries here for plugins that MUST have custom React components
 const pluginComponents: Record<string, ComponentType<PluginViewProps>> = {
-  // Built-in plugins with custom views
-  wifi: dynamic(() => import('@/components/plugins/WiFiPentestView').then(m => ({ default: m.WiFiPentestView })), {
-    loading: LoadingComponent,
-  }),
-  
+  // Healthcheck uses a custom component (legacy - could be migrated to schema)
   healthcheck: dynamic(() => import('@/components/plugins/HealthcheckView').then(m => ({ default: m.HealthcheckView })), {
     loading: LoadingComponent,
   }),
   
-  // Add more plugins here or they will use the dynamic schema renderer
+  // WiFi plugin uses a custom component for full modal/deauth/capture experience
+  wifi: dynamic(() => import('@/components/plugins/WiFiPentestView').then(m => ({ default: m.WiFiPentestView })), {
+    loading: LoadingComponent,
+  }),
+  
+  // Add more plugins here ONLY if they require custom React components
 };
 
 /**

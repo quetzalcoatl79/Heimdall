@@ -138,6 +138,15 @@ sudo ./run_heimdall.sh --prod
 sudo ./stop_heimdall.sh
 ```
 
+### Wordlists
+
+Par défaut, les wordlists sont stockées dans `/opt/heimdall/wordlists` (fallback automatique vers `/tmp/heimdall-wordlists` si permissions insuffisantes).
+
+Vous pouvez surcharger l’emplacement :
+
+- `WORDLISTS_DIR=/chemin/absolu/vers/wordlists`
+- `HEIMDALL_ROOT=/chemin/vers/heimdall` (utilise `$HEIMDALL_ROOT/wordlists`)
+
 ### Installation manuelle
 
 ```bash

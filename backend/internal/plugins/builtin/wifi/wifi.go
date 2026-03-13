@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nxo/engine/internal/database"
 	"github.com/nxo/engine/internal/plugins"
-	"github.com/nxo/engine/internal/ui"
+	"gorm.io/gorm"
 )
 
 // WiFiPlugin expose les endpoints de pilotage Wi-Fi.
@@ -91,6 +92,8 @@ func (p *WiFiPlugin) Models() []interface{} {
 		&WifiNetwork{},
 		&WifiBruteforceResult{},
 		&WifiDeauthLog{},
+		&WifiAudit{},
+		&WifiAuditNetwork{},
 	}
 }
 
@@ -117,92 +120,33 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 	// Store DB reference for use in handlers
 	p.db = deps.DB
 
-	// UI schema
+	// UI schema - construit dynamiquement via ViewBuilder
 	group.GET("/view", func(c buffalo.Context) error {
-		view := ui.NewView("Pentest Wi-Fi").
-			WithDescription("Scan, capture de handshakes et bruteforce WPA/WEP").
-			WithIcon("wifi").
-			WithRefresh(5)
+		// Récupérer les données actuelles
+		interfaces, _ := getWiFiInterfaces()
 
-		// Actions globales
-		view.AddAction(ui.Action{ID: "refresh", Label: "Rafraîchir", Icon: "refresh", Variant: "secondary"})
-		view.AddAction(ui.Action{ID: "scan", Label: "Scanner", Icon: "radar", Variant: "primary"})
+		p.mu.Lock()
+		networks := append([]WiFiNetwork(nil), p.lastScan...)
+		captureRunning := p.captureRunning
+		bruteRunning := p.bruteRunning
+		p.mu.Unlock()
 
-		// Sélecteur d'interface
-		view.AddComponent(ui.Card("Interface Wi-Fi",
-			ui.Form("wifi-select-iface",
-				[]ui.FormField{
-					ui.SelectField("interface", "Interface", []ui.SelectOption{{Value: "", Label: "Choisir"}}).
-						WithHelp("Interfaces monitor/injection détectées"),
-				},
-				ui.WithSubmitLabel("Utiliser cette interface"),
-			),
-		))
+		// Récupérer les captures depuis la BDD
+		viewBuilder := NewViewBuilder(p.db)
+		captures := viewBuilder.GetCapturesForView()
 
-		// Tableau des réseaux détectés avec filtres et tri
-		cols := []ui.TableColumn{
-			{Key: "ssid", Label: "SSID", Sortable: true, Filterable: true},
-			{Key: "bssid", Label: "BSSID", Filterable: true},
-			{Key: "channel", Label: "Canal", Sortable: true, Filterable: true, FilterType: "select"},
-			{Key: "signal", Label: "Signal", Sortable: true, Render: "signal"},
-			{Key: "security", Label: "Sécurité", Sortable: true, Filterable: true, FilterType: "select", Render: "badge"},
-			{Key: "vendor", Label: "Vendor", Filterable: true},
-			{Key: "wps", Label: "WPS", Filterable: true, FilterType: "select"},
-		}
-		table := ui.TableWithOptions(cols, []map[string]any{},
-			ui.TableFilterable(),
-			ui.TableSearchable(),
-			ui.TableSelectable(),
-			ui.TablePaginated(15),
-			ui.TableRowKey("bssid"),
-			ui.TableEmptyMessage("Aucun réseau détecté. Cliquez sur 'Scanner' pour démarrer."),
+		// Récupérer les wordlists
+		wordlists := getWordlistsForView()
+
+		// Construire la vue complète
+		view := viewBuilder.BuildMainView(
+			interfaces,
+			networks,
+			captures,
+			wordlists,
+			captureRunning,
+			bruteRunning,
 		)
-		table.ID = "wifi-networks"
-		view.AddComponent(ui.Card("Réseaux Wi-Fi détectés", table))
-
-		// Actions de capture
-		view.AddComponent(ui.Card("Capture",
-			ui.Grid(2,
-				ui.Form("wifi-capture",
-					[]ui.FormField{
-						ui.TextField("targets", "BSSIDs ciblés").WithPlaceholder("bssid1,bssid2"),
-						ui.TextField("channel", "Canal optionnel"),
-						ui.SelectField("mode", "Mode", []ui.SelectOption{
-							{Value: "wpa", Label: "WPA/WPA2 Handshake"},
-							{Value: "wpa3", Label: "WPA3 (PMKID)"},
-							{Value: "wep", Label: "WEP IVs"},
-						}),
-						ui.SelectField("duration", "Durée", []ui.SelectOption{
-							{Value: "60", Label: "1 minute (test rapide)"},
-							{Value: "300", Label: "5 minutes (WPA2 recommandé)"},
-							{Value: "600", Label: "10 minutes"},
-							{Value: "1800", Label: "30 minutes (WPA3/WEP)"},
-							{Value: "3600", Label: "1 heure"},
-							{Value: "0", Label: "Illimité (arrêt manuel)"},
-						}).WithHelp("WPA2: 5min suffisent. WPA3/WEP: 30min+ recommandé"),
-					},
-					ui.WithSubmitLabel("Lancer la capture"),
-				),
-				ui.Form("wifi-bruteforce",
-					[]ui.FormField{
-						ui.TextField("capture_path", "Fichier capture").WithPlaceholder("/data/caps/handshake.cap"),
-						ui.TextField("wordlist", "Wordlist").WithPlaceholder("/data/wordlists/rockyou.txt"),
-						ui.TextField("bssid", "BSSID"),
-						ui.TextField("ssid", "SSID"),
-					},
-					ui.WithSubmitLabel("Bruteforce"),
-				),
-			),
-		))
-
-		// Logs / statut
-		view.AddComponent(ui.Card("Tâches en cours",
-			ui.List(
-				ui.ListItem("Plugin", p.Key()),
-				ui.ListItem("Version", p.Version()),
-				ui.ListItem("Démarré", p.startedAt.Format(time.RFC3339)),
-			),
-		))
 
 		return writeJSON(c, 200, view)
 	})
@@ -233,30 +177,84 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			iface, _ = ifaces[0]["name"].(string)
 		}
 
-		networks, err := scanWiFi(iface)
-		if err != nil {
-			return writeJSON(c, 500, map[string]any{"error": err.Error()})
-		}
+		       fmt.Printf("[WIFI-SCAN] Lancement du scan sur l'interface: %s\n", iface)
+		       networks, err := scanWiFi(iface)
+		       if err != nil {
+			       fmt.Printf("[WIFI-SCAN] Erreur lors du scan: %v\n", err)
+			       return writeJSON(c, 500, map[string]any{"error": err.Error()})
+		       }
 
-		p.mu.Lock()
-		p.lastScan = networks
-		p.lastAt = time.Now()
-		p.mu.Unlock()
+		       fmt.Printf("[WIFI-SCAN] %d réseaux détectés\n", len(networks))
+		       for _, n := range networks {
+			       fmt.Printf("[WIFI-SCAN] Réseau: SSID=%s BSSID=%s Channel=%d Signal=%d\n", n.SSID, n.BSSID, n.Channel, n.Signal)
+		       }
 
-		return writeJSON(c, 200, map[string]any{
-			"status":     "ok",
-			"count":      len(networks),
-			"scanned_at": p.lastAt,
-			"results":    networks,
-		})
+		       // Sauvegarde en mémoire
+		       p.mu.Lock()
+		       p.lastScan = networks
+		       p.lastAt = time.Now()
+		       p.mu.Unlock()
+
+		       // Sauvegarde en base (table wifi_networks)
+		       if p.db != nil {
+			       for _, n := range networks {
+				       // Upsert par BSSID + Channel
+				       var existing WifiNetwork
+				       err := p.db.Where("bssid = ? AND channel = ?", n.BSSID, n.Channel).First(&existing).Error
+				       if err == gorm.ErrRecordNotFound {
+					       _ = p.db.Create(&n)
+				       } else if err == nil {
+					       _ = p.db.Model(&existing).Updates(n)
+				       }
+			       }
+		       }
+
+		       return writeJSON(c, 200, map[string]any{
+			       "status":     "ok",
+			       "count":      len(networks),
+			       "scanned_at": p.lastAt,
+			       "results":    networks,
+		       })
 	})
 
 	// Récupérer les derniers résultats de scan
 	group.GET("/scan/results", func(c buffalo.Context) error {
 		p.mu.Lock()
-		results := append([]WiFiNetwork(nil), p.lastScan...)
+		networks := append([]WiFiNetwork(nil), p.lastScan...)
 		scannedAt := p.lastAt
 		p.mu.Unlock()
+
+		// Enrichir les résultats avec les actions (comme dans le ViewBuilder)
+		results := make([]map[string]any, len(networks))
+		for i, n := range networks {
+			results[i] = map[string]any{
+				"ssid":     n.SSID,
+				"bssid":    n.BSSID,
+				"channel":  n.Channel,
+				"signal":   n.Signal,
+				"security": n.Security,
+				"vendor":   n.Vendor,
+				"wps":      n.WPS,
+				"actions": map[string]any{
+					"type": "rowActions",
+					"items": []map[string]any{
+						{
+							"id":       "deauth",
+							"label":    "Deauth",
+							"icon":     "zap",
+							"variant":  "danger",
+							"endpoint": "/plugins/wifi/deauth",
+							"method":   "POST",
+							"data": map[string]any{
+								"bssid":   n.BSSID,
+								"channel": n.Channel,
+							},
+							"confirm": fmt.Sprintf("Lancer une attaque deauth sur %s ?", n.SSID),
+						},
+					},
+				},
+			}
+		}
 
 		return writeJSON(c, 200, map[string]any{
 			"results":    results,
@@ -985,6 +983,29 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 					})
 			}
 
+			// Sauvegarder dans la table des résultats de bruteforce (succès ou échec)
+			if p.db != nil {
+				now := time.Now()
+				status := "completed"
+				if !result.Success {
+					status = "failed"
+				}
+				bruteResult := WifiBruteforceResult{
+					SSID:         result.SSID,
+					BSSID:        result.BSSID,
+					CapturePath:  req.CapturePath,
+					WordlistPath: req.Wordlist,
+					WordlistName: filepath.Base(req.Wordlist),
+					Success:      result.Success,
+					Password:     result.Password,
+					DurationSecs: duration,
+					StartedAt:    p.bruteStartedAt,
+					Status:       status,
+				}
+				bruteResult.CompletedAt = &now
+				p.db.Create(&bruteResult)
+			}
+
 			if err != nil && ctx.Err() == nil {
 				fmt.Printf("[WIFI-BRUTE] aircrack-ng error: %v\n", err)
 			}
@@ -1002,6 +1023,394 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 			"wordlist":   req.Wordlist,
 			"bssid":      req.BSSID,
 			"started_at": p.bruteStartedAt,
+		})
+	})
+
+	// Bruteforce Combiné - Mode intelligent avec wordlist et/ou pattern
+	group.POST("/bruteforce/combined", func(c buffalo.Context) error {
+		var req struct {
+			CaptureID      string   `json:"capture_id"`
+			CapturePath    string   `json:"capture_path"`
+			BSSID          string   `json:"bssid"`
+			SSID           string   `json:"ssid"`
+			UseWordlist    bool     `json:"use_wordlist"`
+			UsePattern     bool     `json:"use_pattern"`
+			Wordlists      []string `json:"wordlists"` // Multi-wordlist
+			Wordlist       string   `json:"wordlist"`  // Pour compatibilité
+			CustomWordlist string   `json:"custom_wordlist"`
+			ISP            string   `json:"isp"`
+			CustomMask     string   `json:"custom_mask"`
+			TimeoutHours   int      `json:"timeout_hours"`
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
+
+		// Timeout par défaut: 2 heures
+		timeoutDuration := 2 * time.Hour
+		if req.TimeoutHours > 0 {
+			timeoutDuration = time.Duration(req.TimeoutHours) * time.Hour
+		}
+
+		// Récupérer le chemin de capture
+		capturePath := req.CapturePath
+		if req.CaptureID != "" && p.db != nil {
+			var capture WifiCapture
+			if err := p.db.First(&capture, "id = ?", req.CaptureID).Error; err == nil {
+				// Trouver le fichier .cap réel
+				capFiles, _ := filepath.Glob(capture.CapturePath + "*.cap")
+				if len(capFiles) > 0 {
+					capturePath = capFiles[0]
+				} else {
+					capturePath = capture.CapturePath
+				}
+				if req.BSSID == "" {
+					req.BSSID = capture.BSSID
+				}
+				if req.SSID == "" {
+					req.SSID = capture.SSID
+				}
+			}
+		}
+
+		if capturePath == "" {
+			return writeJSON(c, 400, map[string]any{"error": "Fichier capture manquant"})
+		}
+
+		// Vérifier que le fichier existe
+		if _, err := os.Stat(capturePath); err != nil {
+			return writeJSON(c, 400, map[string]any{"error": "Fichier capture introuvable", "path": capturePath})
+		}
+
+		// Au moins un mode doit être sélectionné
+		if !req.UseWordlist && !req.UsePattern {
+			return writeJSON(c, 400, map[string]any{"error": "Sélectionnez au moins un mode (Wordlist ou Pattern)"})
+		}
+
+		// Vérifier si un bruteforce est déjà en cours
+		p.mu.Lock()
+		if p.bruteRunning {
+			p.mu.Unlock()
+			return writeJSON(c, 409, map[string]any{"error": "Un bruteforce est déjà en cours", "capture": p.bruteCapture})
+		}
+		p.bruteRunning = true
+		p.bruteCapture = capturePath
+		p.bruteStartedAt = time.Now()
+		p.bruteResult = nil
+		p.mu.Unlock()
+
+		// Créer le contexte avec timeout
+		ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
+		p.mu.Lock()
+		p.bruteCancel = cancel
+		p.mu.Unlock()
+		fmt.Printf("[WIFI-BRUTE] ⏱️ Timeout configuré: %v\n", timeoutDuration)
+
+		// Déterminer la wordlist
+		wordlist := req.Wordlist
+		if wordlist == "custom" && req.CustomWordlist != "" {
+			wordlist = req.CustomWordlist
+		}
+
+		// Logique spéciale pour Freebox : utiliser la wordlist de mots latins
+		isp := req.ISP
+		if isp == "Free" {
+			freeboxWordlist := GetFreeboxWordlistPath()
+			if freeboxWordlist != "" {
+				fmt.Printf("[WIFI-BRUTE] 🇫🇷 Freebox détectée! Utilisation de la wordlist latine: %s\n", freeboxWordlist)
+				// Si pas de wordlist spécifiée, utiliser la wordlist Freebox
+				if wordlist == "" || wordlist == "/opt/heimdall/wordlists/rockyou.txt" {
+					wordlist = freeboxWordlist
+				}
+			}
+		}
+
+		if wordlist == "" {
+			wordlist = "/opt/heimdall/wordlists/rockyou.txt"
+		}
+
+		// Déterminer le masque pour le pattern
+		mask := req.CustomMask
+		if mask == "" && isp != "" {
+			masks := GetMasksForISP(isp)
+			if len(masks) > 0 {
+				mask = masks[0].Mask
+				fmt.Printf("[WIFI-BRUTE] Masque trouvé pour %s: %s\n", isp, mask)
+			} else {
+				fmt.Printf("[WIFI-BRUTE] ⚠️ Aucun masque défini pour l'ISP '%s'\n", isp)
+			}
+		}
+
+		// Modes à exécuter
+		modes := []string{}
+		if req.UseWordlist {
+			modes = append(modes, "wordlist")
+		}
+		if req.UsePattern {
+			if mask != "" {
+				modes = append(modes, "pattern")
+			} else {
+				fmt.Printf("[WIFI-BRUTE] ⚠️ Pattern demandé mais aucun masque disponible (ISP: %s)\n", isp)
+			}
+		}
+
+		// Lancer en background
+		go func() {
+			defer func() {
+				p.mu.Lock()
+				p.bruteRunning = false
+				p.bruteCmd = nil
+				p.bruteCancel = nil
+				p.mu.Unlock()
+			}()
+
+			var finalResult *BruteforceResult
+			startTime := time.Now()
+
+			// Phase 1: Wordlist (aircrack-ng - plus rapide, multi)
+			if req.UseWordlist {
+				var wordlists []string
+				if len(req.Wordlists) > 0 {
+					wordlists = req.Wordlists
+				} else if req.Wordlist != "" {
+					wordlists = []string{req.Wordlist}
+				} else {
+					wordlists = []string{"/opt/heimdall/wordlists/rockyou.txt"}
+				}
+				for _, wl := range wordlists {
+					fmt.Printf("[WIFI-BRUTE] 📖 Phase 1: Wordlist (%s)\n", wl)
+					if _, err := os.Stat(wl); err == nil {
+						args := []string{"-w", wl, "-b", req.BSSID, "-l", capturePath + ".key", capturePath}
+						cmd := exec.CommandContext(ctx, "/usr/bin/aircrack-ng", args...)
+						p.mu.Lock()
+						p.bruteCmd = cmd
+						p.mu.Unlock()
+						output, err := cmd.CombinedOutput()
+						outputStr := string(output)
+						if strings.Contains(outputStr, "KEY FOUND!") {
+							// Mot de passe trouvé!
+							password := ""
+							if idx := strings.Index(outputStr, "KEY FOUND! [ "); idx != -1 {
+								start := idx + len("KEY FOUND! [ ")
+								end := strings.Index(outputStr[start:], " ]")
+								if end != -1 {
+									password = outputStr[start : start+end]
+								}
+							}
+							if keyData, err := os.ReadFile(capturePath + ".key"); err == nil {
+								password = strings.TrimSpace(string(keyData))
+							}
+							finalResult = &BruteforceResult{
+								Success:  true,
+								Password: password,
+								SSID:     req.SSID,
+								BSSID:    req.BSSID,
+								Capture:  capturePath,
+								Wordlist: wl,
+								Duration: time.Since(startTime).Seconds(),
+								TestedAt: time.Now(),
+							}
+							fmt.Printf("[WIFI-BRUTE] ✅ MOT DE PASSE TROUVÉ (wordlist): %s\n", password)
+							break
+						} else if err != nil && ctx.Err() != nil {
+							// Annulé
+							return
+						}
+					}
+				}
+			}
+
+			// Phase 2: Pattern (hashcat - si wordlist n'a pas trouvé)
+			if finalResult == nil && req.UsePattern && mask != "" {
+				// Avertissement pour Free/Freebox - le mask seul est inefficace
+				if isp == "Free" {
+					fmt.Printf("[WIFI-BRUTE] ⚠️ Freebox détectée: les mots de passe utilisent des mots latins.\n")
+					fmt.Printf("[WIFI-BRUTE] ⚠️ Le mode Pattern seul est peu efficace. Recommandation: utiliser une wordlist de mots latins.\n")
+				}
+				fmt.Printf("[WIFI-BRUTE] 🎯 Phase 2: Pattern ISP (%s, mask: %s)\n", isp, mask)
+
+				// Vérifier si hashcat est disponible
+				if CheckHashcatInstalled()["hashcat"] {
+					config := BruteforceConfig{
+						CapturePath: capturePath,
+						BSSID:       req.BSSID,
+						SSID:        req.SSID,
+						Mode:        ModeMask,
+						ISP:         isp,
+						MaskPattern: mask,
+					}
+
+					result, err := RunMaskAttack(ctx, config, nil)
+					if err == nil && result != nil && result.Success {
+						finalResult = result
+						fmt.Printf("[WIFI-BRUTE] ✅ MOT DE PASSE TROUVÉ (pattern): %s\n", result.Password)
+					} else if ctx.Err() != nil {
+						if ctx.Err() == context.DeadlineExceeded {
+							fmt.Printf("[WIFI-BRUTE] ⏱️ TIMEOUT atteint après %.1f heures\n", time.Since(startTime).Hours())
+						}
+						// Continue to save result even on timeout
+					}
+				} else {
+					fmt.Println("[WIFI-BRUTE] ⚠️ hashcat non installé, pattern attack ignoré")
+				}
+			}
+
+			// Phase 3: Attaque combinatoire Freebox (si c'est une Freebox et pas encore trouvé)
+			if finalResult == nil && isp == "Free" && ctx.Err() == nil {
+				fmt.Println("[WIFI-BRUTE] 🇫🇷 Phase 3: Attaque combinatoire Freebox (mots latins)")
+
+				// Utiliser hashcat en mode combinatoire (-a 1) avec la wordlist de mots latins
+				if CheckHashcatInstalled()["hashcat"] {
+					freeboxWordlist := GetFreeboxWordlistPath()
+					if freeboxWordlist != "" {
+						// Convertir le fichier .cap si nécessaire
+						hcPath := capturePath
+						if strings.HasSuffix(capturePath, ".cap") {
+							var err error
+							hcPath, err = ConvertCapToHashcat(capturePath)
+							if err != nil {
+								fmt.Printf("[WIFI-BRUTE] ⚠️ Conversion échouée: %v\n", err)
+							}
+						}
+
+						if hcPath != "" {
+							// Mode combinatoire: combine 2 wordlists
+							// On utilise la même wordlist 2 fois pour avoir word1-word2
+							args := []string{
+								"-m", "22000",
+								"-a", "1", // Combinatory attack
+								"--status",
+								"--status-timer=30",
+								"-j", "$-", // Add "-" suffix to left word
+								"-o", hcPath + ".cracked",
+								hcPath,
+								freeboxWordlist,
+								freeboxWordlist,
+							}
+
+							fmt.Printf("[WIFI-BRUTE] 🔧 Commande hashcat combinatoire: hashcat %v\n", args)
+
+							cmd := exec.CommandContext(ctx, "hashcat", args...)
+							output, err := cmd.CombinedOutput()
+
+							if err == nil || strings.Contains(string(output), "Cracked") {
+								// Check for cracked password
+								crackedFile := hcPath + ".cracked"
+								if data, readErr := os.ReadFile(crackedFile); readErr == nil && len(data) > 0 {
+									parts := strings.Split(string(data), ":")
+									if len(parts) >= 2 {
+										password := strings.TrimSpace(parts[len(parts)-1])
+										finalResult = &BruteforceResult{
+											Success:  true,
+											Password: password,
+											SSID:     req.SSID,
+											BSSID:    req.BSSID,
+											Capture:  capturePath,
+											Duration: time.Since(startTime).Seconds(),
+											TestedAt: time.Now(),
+										}
+										fmt.Printf("[WIFI-BRUTE] ✅ MOT DE PASSE TROUVÉ (combinatoire): %s\n", password)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Vérifier si timeout
+			timedOut := ctx.Err() == context.DeadlineExceeded
+
+			// Résultat final
+			duration := time.Since(startTime).Seconds()
+			if finalResult == nil {
+				reason := "non trouvé"
+				if timedOut {
+					reason = fmt.Sprintf("timeout après %.1fh", duration/3600)
+				}
+				finalResult = &BruteforceResult{
+					Success:  false,
+					SSID:     req.SSID,
+					BSSID:    req.BSSID,
+					Capture:  capturePath,
+					Wordlist: wordlist,
+					Duration: duration,
+					TestedAt: time.Now(),
+				}
+				fmt.Printf("[WIFI-BRUTE] ❌ Mot de passe %s pour %s (durée: %.1fs)\n", reason, req.SSID, duration)
+			}
+
+			p.mu.Lock()
+			p.bruteResult = finalResult
+			p.mu.Unlock()
+
+			// Sauvegarder le résultat
+			resultJSON, _ := json.MarshalIndent(finalResult, "", "  ")
+			_ = os.WriteFile(capturePath+".result.json", resultJSON, 0644)
+
+			// Mettre à jour la capture en BDD si mot de passe trouvé
+			if finalResult.Success && p.db != nil {
+				now := time.Now()
+				p.db.Model(&WifiCapture{}).
+					Where("capture_path LIKE ?", strings.TrimSuffix(capturePath, ".cap")+"%").
+					Updates(map[string]any{
+						"cracked":          true,
+						"cracked_password": finalResult.Password,
+						"cracked_at":       now,
+					})
+			}
+
+			// Sauvegarder dans la table des résultats de bruteforce (succès ou échec)
+			if p.db != nil {
+				now := time.Now()
+				status := "completed"
+				if !finalResult.Success {
+					status = "failed"
+				}
+
+				wordlistPath := wordlist
+				wordlistName := ""
+				if wordlist != "" {
+					wordlistName = filepath.Base(wordlist)
+				}
+				if req.UseWordlist && len(req.Wordlists) > 0 {
+					wordlistPath = ""
+					wordlistName = strings.Join(req.Wordlists, ",")
+				} else if !req.UseWordlist && req.UsePattern {
+					wordlistPath = ""
+					if mask != "" {
+						wordlistName = "pattern:" + mask
+					}
+				}
+
+				bruteResult := WifiBruteforceResult{
+					SSID:         finalResult.SSID,
+					BSSID:        finalResult.BSSID,
+					CapturePath:  capturePath,
+					WordlistPath: wordlistPath,
+					WordlistName: wordlistName,
+					Success:      finalResult.Success,
+					Password:     finalResult.Password,
+					DurationSecs: duration,
+					StartedAt:    startTime,
+					Status:       status,
+				}
+				bruteResult.CompletedAt = &now
+				p.db.Create(&bruteResult)
+			}
+		}()
+
+		return writeJSON(c, 200, map[string]any{
+			"status":       "started",
+			"message":      fmt.Sprintf("Bruteforce démarré (modes: %v)", modes),
+			"capture":      capturePath,
+			"modes":        modes,
+			"use_wordlist": req.UseWordlist,
+			"use_pattern":  req.UsePattern,
+			"wordlist":     wordlist,
+			"isp":          isp,
+			"mask":         mask,
+			"bssid":        req.BSSID,
+			"ssid":         req.SSID,
+			"started_at":   p.bruteStartedAt,
 		})
 	})
 
@@ -1052,6 +1461,37 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 
 	// Bruteforce - Résultats sauvegardés
 	group.GET("/bruteforce/results", func(c buffalo.Context) error {
+		if p.db != nil {
+			var dbResults []WifiBruteforceResult
+			p.db.Order("created_at DESC").Limit(50).Find(&dbResults)
+
+			results := make([]map[string]any, 0, len(dbResults))
+			for _, r := range dbResults {
+				testedAt := r.CompletedAt
+				if testedAt == nil {
+					t := r.CreatedAt
+					testedAt = &t
+				}
+				results = append(results, map[string]any{
+					"success":          r.Success,
+					"password":         r.Password,
+					"ssid":             r.SSID,
+					"bssid":            r.BSSID,
+					"capture":          r.CapturePath,
+					"wordlist":         r.WordlistPath,
+					"wordlist_name":    r.WordlistName,
+					"duration_seconds": r.DurationSecs,
+					"tested_at":        testedAt,
+					"status":           r.Status,
+				})
+			}
+
+			return writeJSON(c, 200, map[string]any{
+				"results": results,
+				"count":   len(results),
+			})
+		}
+
 		captureDir := "/opt/heimdall/captures"
 		files, _ := filepath.Glob(captureDir + "/*.result.json")
 
@@ -1074,15 +1514,28 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 		})
 	})
 
-	// Wordlists disponibles
+	// Wordlists disponibles (version améliorée avec téléchargement)
 	group.GET("/wordlists", func(c buffalo.Context) error {
+		// Lister les wordlists connues avec leur statut
+		knownWordlists := ListWordlists()
+		
+		// Lister aussi les fichiers locaux non-répertoriés
 		wordlistDirs := []string{
-			"/opt/heimdall/wordlists",
+			GetWordlistsDir(),
 			"/usr/share/wordlists",
 			"/usr/share/seclists/Passwords",
 		}
 
-		var wordlists []map[string]any
+		var localWordlists []map[string]any
+		seenPaths := make(map[string]bool)
+		
+		// Marquer les wordlists connues comme vues
+		for _, wl := range knownWordlists {
+			if wl.LocalPath != "" {
+				seenPaths[wl.LocalPath] = true
+			}
+		}
+
 		for _, dir := range wordlistDirs {
 			files, err := os.ReadDir(dir)
 			if err != nil {
@@ -1094,6 +1547,11 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 				}
 				info, _ := f.Info()
 				path := filepath.Join(dir, f.Name())
+				
+				// Skip si déjà dans les wordlists connues
+				if seenPaths[path] {
+					continue
+				}
 
 				// Compter le nombre de lignes
 				var lineCount int64
@@ -1108,18 +1566,60 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 					}
 				}
 
-				wordlists = append(wordlists, map[string]any{
-					"path":  path,
-					"name":  f.Name(),
-					"size":  info.Size(),
-					"lines": lineCount,
+				localWordlists = append(localWordlists, map[string]any{
+					"path":      path,
+					"name":      f.Name(),
+					"size":      info.Size(),
+					"lines":     lineCount,
+					"installed": true,
+					"category":  "local",
 				})
 			}
 		}
 
 		return writeJSON(c, 200, map[string]any{
-			"wordlists": wordlists,
-			"count":     len(wordlists),
+			"known":  knownWordlists,
+			"local":  localWordlists,
+			"count":  len(knownWordlists) + len(localWordlists),
+		})
+	})
+	
+	// Télécharger une wordlist
+	group.POST("/wordlists/download", func(c buffalo.Context) error {
+		var req struct {
+			Name string `json:"name"`
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
+		
+		if req.Name == "" {
+			return writeJSON(c, 400, map[string]any{"error": "Nom de wordlist manquant"})
+		}
+		
+		path, err := DownloadWordlist(req.Name)
+		if err != nil {
+			return writeJSON(c, 500, map[string]any{"error": err.Error()})
+		}
+		
+		return writeJSON(c, 200, map[string]any{
+			"success": true,
+			"path":    path,
+			"message": fmt.Sprintf("Wordlist %s téléchargée avec succès", req.Name),
+		})
+	})
+	
+	// Obtenir les meilleures wordlists pour un ISP donné
+	group.GET("/wordlists/recommend/{isp}", func(c buffalo.Context) error {
+		isp := c.Param("isp")
+		if isp == "" {
+			isp = "unknown"
+		}
+		
+		recommended := GetBestWordlistsForISP(isp)
+		
+		return writeJSON(c, 200, map[string]any{
+			"isp":         isp,
+			"recommended": recommended,
+			"count":       len(recommended),
 		})
 	})
 
@@ -1208,6 +1708,528 @@ func (p *WiFiPlugin) RegisterRoutes(group *buffalo.App, deps plugins.Deps) {
 
 		suggestion := GenerateWordlistSuggestion(isp)
 		return writeJSON(c, 200, suggestion)
+	})
+
+	// ========== MASK/PATTERN BRUTEFORCE (hashcat) ==========
+
+	// Vérifier les outils disponibles
+	group.GET("/bruteforce/tools", func(c buffalo.Context) error {
+		tools := CheckHashcatInstalled()
+		return writeJSON(c, 200, map[string]any{
+			"tools": tools,
+			"ready": tools["hashcat"] && tools["hcxpcapngtool"],
+		})
+	})
+
+	// Obtenir les masques disponibles pour un ISP
+	group.GET("/bruteforce/masks/{isp}", func(c buffalo.Context) error {
+		isp := c.Param("isp")
+		masks := GetMasksForISP(isp)
+		if len(masks) == 0 {
+			return writeJSON(c, 404, map[string]any{"error": "Aucun masque pour cet ISP"})
+		}
+		return writeJSON(c, 200, map[string]any{
+			"isp":   isp,
+			"masks": masks,
+		})
+	})
+
+	// Lancer un bruteforce par pattern (mask attack)
+	group.POST("/bruteforce/mask", func(c buffalo.Context) error {
+		var req struct {
+			CapturePath   string `json:"capture_path"`
+			BSSID         string `json:"bssid"`
+			SSID          string `json:"ssid"`
+			ISP           string `json:"isp,omitempty"`
+			MaskPattern   string `json:"mask_pattern,omitempty"`
+			CustomCharset string `json:"custom_charset,omitempty"`
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
+
+		if req.CapturePath == "" {
+			return writeJSON(c, 400, map[string]any{"error": "Fichier capture manquant"})
+		}
+
+		// Vérifier que hashcat est installé
+		tools := CheckHashcatInstalled()
+		if !tools["hashcat"] {
+			return writeJSON(c, 500, map[string]any{
+				"error": "hashcat non installé",
+				"hint":  "sudo apt install hashcat hcxtools",
+			})
+		}
+
+		config := BruteforceConfig{
+			CapturePath:   req.CapturePath,
+			BSSID:         req.BSSID,
+			SSID:          req.SSID,
+			Mode:          ModeMask,
+			ISP:           req.ISP,
+			MaskPattern:   req.MaskPattern,
+			CustomCharset: req.CustomCharset,
+		}
+
+		// Lancer en background
+		ctx, cancel := context.WithCancel(context.Background())
+		progressChan := make(chan BruteforceState, 10)
+
+		p.mu.Lock()
+		if p.bruteRunning {
+			p.mu.Unlock()
+			cancel()
+			return writeJSON(c, 409, map[string]any{"error": "Un bruteforce est déjà en cours"})
+		}
+		p.bruteRunning = true
+		p.bruteCapture = req.CapturePath
+		p.bruteStartedAt = time.Now()
+		p.bruteCancel = cancel
+		p.mu.Unlock()
+
+		go func() {
+			defer func() {
+				p.mu.Lock()
+				p.bruteRunning = false
+				p.bruteCancel = nil
+				p.mu.Unlock()
+				close(progressChan)
+			}()
+
+			result, err := RunMaskAttack(ctx, config, progressChan)
+			if err != nil {
+				fmt.Printf("[WIFI-MASK] Erreur: %v\n", err)
+				return
+			}
+
+			p.mu.Lock()
+			p.bruteResult = result
+			p.mu.Unlock()
+
+			// Sauvegarder en BDD
+			if p.db != nil && result != nil {
+				bruteResult := WifiBruteforceResult{
+					SSID:         result.SSID,
+					BSSID:        result.BSSID,
+					CapturePath:  result.Capture,
+					WordlistName: "mask:" + config.MaskPattern,
+					Success:      result.Success,
+					Password:     result.Password,
+					DurationSecs: result.Duration,
+					StartedAt:    p.bruteStartedAt,
+					Status:       "completed",
+				}
+				now := time.Now()
+				bruteResult.CompletedAt = &now
+				p.db.Create(&bruteResult)
+
+				if result.Success {
+					fmt.Printf("[WIFI-MASK] ✅ MOT DE PASSE TROUVÉ: %s\n", result.Password)
+				}
+			}
+		}()
+
+		return writeJSON(c, 200, map[string]any{
+			"status":     "started",
+			"mode":       "mask",
+			"capture":    req.CapturePath,
+			"mask":       config.MaskPattern,
+			"isp":        req.ISP,
+			"started_at": p.bruteStartedAt,
+		})
+	})
+
+	// Lancer un bruteforce incrémental
+	group.POST("/bruteforce/increment", func(c buffalo.Context) error {
+		var req struct {
+			CapturePath string `json:"capture_path"`
+			BSSID       string `json:"bssid"`
+			SSID        string `json:"ssid"`
+			MinLength   int    `json:"min_length"`
+			MaxLength   int    `json:"max_length"`
+			CharsetType string `json:"charset_type"` // digits, lower, upper, alnum, all
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
+
+		if req.CapturePath == "" {
+			return writeJSON(c, 400, map[string]any{"error": "Fichier capture manquant"})
+		}
+
+		config := BruteforceConfig{
+			CapturePath: req.CapturePath,
+			BSSID:       req.BSSID,
+			SSID:        req.SSID,
+			Mode:        ModeIncrement,
+			MinLength:   req.MinLength,
+			MaxLength:   req.MaxLength,
+			CharsetType: req.CharsetType,
+		}
+
+		// Lancer en background (similaire à mask)
+		ctx, cancel := context.WithCancel(context.Background())
+
+		p.mu.Lock()
+		if p.bruteRunning {
+			p.mu.Unlock()
+			cancel()
+			return writeJSON(c, 409, map[string]any{"error": "Un bruteforce est déjà en cours"})
+		}
+		p.bruteRunning = true
+		p.bruteCapture = req.CapturePath
+		p.bruteStartedAt = time.Now()
+		p.bruteCancel = cancel
+		p.mu.Unlock()
+
+		go func() {
+			defer func() {
+				p.mu.Lock()
+				p.bruteRunning = false
+				p.bruteCancel = nil
+				p.mu.Unlock()
+			}()
+
+			result, err := RunIncrementalAttack(ctx, config, nil)
+			if err != nil {
+				fmt.Printf("[WIFI-INCREMENT] Erreur: %v\n", err)
+				return
+			}
+
+			p.mu.Lock()
+			p.bruteResult = result
+			p.mu.Unlock()
+
+			if p.db != nil && result != nil {
+				bruteResult := WifiBruteforceResult{
+					SSID:         result.SSID,
+					BSSID:        result.BSSID,
+					CapturePath:  result.Capture,
+					WordlistName: fmt.Sprintf("increment:%d-%d:%s", config.MinLength, config.MaxLength, config.CharsetType),
+					Success:      result.Success,
+					Password:     result.Password,
+					DurationSecs: result.Duration,
+					StartedAt:    p.bruteStartedAt,
+					Status:       "completed",
+				}
+				now := time.Now()
+				bruteResult.CompletedAt = &now
+				p.db.Create(&bruteResult)
+			}
+		}()
+
+		return writeJSON(c, 200, map[string]any{
+			"status":     "started",
+			"mode":       "increment",
+			"capture":    req.CapturePath,
+			"min_length": config.MinLength,
+			"max_length": config.MaxLength,
+			"charset":    config.CharsetType,
+			"started_at": p.bruteStartedAt,
+		})
+	})
+
+	// ========== AUDITS & RAPPORTS ==========
+
+	// Créer un nouvel audit
+	group.POST("/audits", func(c buffalo.Context) error {
+		var req struct {
+			ClientName    string `json:"client_name"`
+			ClientContact string `json:"client_contact,omitempty"`
+			Location      string `json:"location,omitempty"`
+			TesterName    string `json:"tester_name,omitempty"`
+			AuditType     string `json:"audit_type,omitempty"`
+			Notes         string `json:"notes,omitempty"`
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
+
+		if req.ClientName == "" {
+			return writeJSON(c, 400, map[string]any{"error": "Nom du client requis"})
+		}
+
+		audit := WifiAudit{
+			ClientName:    req.ClientName,
+			ClientContact: req.ClientContact,
+			Location:      req.Location,
+			TesterName:    req.TesterName,
+			AuditType:     req.AuditType,
+			StartDate:     time.Now(),
+			Status:        "in_progress",
+			Notes:         req.Notes,
+		}
+
+		if p.db != nil {
+			if err := p.db.Create(&audit).Error; err != nil {
+				return writeJSON(c, 500, map[string]any{"error": "Erreur création audit"})
+			}
+		}
+
+		return writeJSON(c, 201, map[string]any{
+			"status": "created",
+			"audit":  audit,
+		})
+	})
+
+	// Lister les audits
+	group.GET("/audits", func(c buffalo.Context) error {
+		var audits []WifiAudit
+		if p.db != nil {
+			p.db.Order("created_at DESC").Find(&audits)
+		}
+		return writeJSON(c, 200, map[string]any{
+			"audits": audits,
+			"count":  len(audits),
+		})
+	})
+
+	// Obtenir un audit spécifique avec ses réseaux
+	group.GET("/audits/{id}", func(c buffalo.Context) error {
+		id := c.Param("id")
+		var audit WifiAudit
+		if p.db != nil {
+			if err := p.db.First(&audit, "id = ?", id).Error; err != nil {
+				return writeJSON(c, 404, map[string]any{"error": "Audit non trouvé"})
+			}
+		}
+
+		// Récupérer les réseaux liés
+		var networks []WifiAuditNetwork
+		if p.db != nil {
+			p.db.Where("audit_id = ?", id).Find(&networks)
+		}
+
+		return writeJSON(c, 200, map[string]any{
+			"audit":    audit,
+			"networks": networks,
+		})
+	})
+
+	// Ajouter un réseau à un audit
+	group.POST("/audits/{id}/networks", func(c buffalo.Context) error {
+		auditID := c.Param("id")
+
+		var req struct {
+			SSID              string  `json:"ssid"`
+			BSSID             string  `json:"bssid"`
+			Channel           int     `json:"channel"`
+			Security          string  `json:"security"`
+			Vendor            string  `json:"vendor,omitempty"`
+			ISP               string  `json:"isp,omitempty"`
+			HandshakeCaptured bool    `json:"handshake_captured"`
+			PasswordCracked   bool    `json:"password_cracked"`
+			Password          string  `json:"password,omitempty"`
+			CrackMethod       string  `json:"crack_method,omitempty"`
+			CrackDuration     float64 `json:"crack_duration,omitempty"`
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
+
+		auditUUID, err := uuid.Parse(auditID)
+		if err != nil {
+			return writeJSON(c, 400, map[string]any{"error": "ID audit invalide"})
+		}
+
+		network := WifiAuditNetwork{
+			AuditID:           auditUUID,
+			SSID:              req.SSID,
+			BSSID:             req.BSSID,
+			Channel:           req.Channel,
+			Security:          req.Security,
+			Vendor:            req.Vendor,
+			ISP:               req.ISP,
+			HandshakeCaptured: req.HandshakeCaptured,
+			PasswordCracked:   req.PasswordCracked,
+			Password:          req.Password,
+			CrackMethod:       req.CrackMethod,
+			CrackDuration:     req.CrackDuration,
+		}
+
+		// Déterminer le niveau de vulnérabilité
+		netEntry := NetworkReportEntry{
+			Security:          req.Security,
+			HandshakeCaptured: req.HandshakeCaptured,
+			PasswordCracked:   req.PasswordCracked,
+		}
+		network.VulnerabilityLevel = DetermineVulnerabilityLevel(netEntry)
+
+		if p.db != nil {
+			if err := p.db.Create(&network).Error; err != nil {
+				return writeJSON(c, 500, map[string]any{"error": "Erreur ajout réseau"})
+			}
+
+			// Mettre à jour les compteurs de l'audit
+			p.db.Model(&WifiAudit{}).Where("id = ?", auditID).Updates(map[string]any{
+				"networks_tested":     gorm.Expr("networks_tested + 1"),
+				"handshakes_captured": gorm.Expr("handshakes_captured + ?", boolToInt(req.HandshakeCaptured)),
+				"passwords_cracked":   gorm.Expr("passwords_cracked + ?", boolToInt(req.PasswordCracked)),
+			})
+		}
+
+		return writeJSON(c, 201, map[string]any{
+			"status":  "added",
+			"network": network,
+		})
+	})
+
+	// Terminer un audit
+	group.POST("/audits/{id}/complete", func(c buffalo.Context) error {
+		id := c.Param("id")
+		now := time.Now()
+
+		if p.db != nil {
+			p.db.Model(&WifiAudit{}).Where("id = ?", id).Updates(map[string]any{
+				"status":   "completed",
+				"end_date": now,
+			})
+		}
+
+		return writeJSON(c, 200, map[string]any{
+			"status":   "completed",
+			"end_date": now,
+		})
+	})
+
+	// Générer le rapport PDF
+	group.POST("/audits/{id}/report", func(c buffalo.Context) error {
+		id := c.Param("id")
+
+		var req struct {
+			TesterName  string `json:"tester_name,omitempty"`
+			CompanyLogo string `json:"company_logo,omitempty"`
+		}
+		_ = json.NewDecoder(c.Request().Body).Decode(&req)
+
+		// Récupérer l'audit
+		var audit WifiAudit
+		if p.db != nil {
+			if err := p.db.First(&audit, "id = ?", id).Error; err != nil {
+				return writeJSON(c, 404, map[string]any{"error": "Audit non trouvé"})
+			}
+		}
+
+		// Récupérer les réseaux
+		var auditNetworks []WifiAuditNetwork
+		if p.db != nil {
+			p.db.Where("audit_id = ?", id).Find(&auditNetworks)
+		}
+
+		// Construire les données du rapport
+		networks := make([]NetworkReportEntry, len(auditNetworks))
+		for i, n := range auditNetworks {
+			networks[i] = NetworkReportEntry{
+				SSID:               n.SSID,
+				BSSID:              n.BSSID,
+				Channel:            n.Channel,
+				Security:           n.Security,
+				Vendor:             n.Vendor,
+				ISP:                n.ISP,
+				HandshakeCaptured:  n.HandshakeCaptured,
+				PasswordCracked:    n.PasswordCracked,
+				Password:           n.Password,
+				CrackMethod:        n.CrackMethod,
+				CrackDuration:      n.CrackDuration,
+				VulnerabilityLevel: n.VulnerabilityLevel,
+				TestedAt:           n.CreatedAt,
+			}
+		}
+
+		endDate := time.Now()
+		if audit.EndDate != nil {
+			endDate = *audit.EndDate
+		}
+
+		tester := req.TesterName
+		if tester == "" {
+			tester = audit.TesterName
+		}
+
+		reportData := ReportData{
+			ClientName:         audit.ClientName,
+			ClientContact:      audit.ClientContact,
+			Location:           audit.Location,
+			AuditID:            audit.ID.String(),
+			StartDate:          audit.StartDate,
+			EndDate:            endDate,
+			TesterName:         tester,
+			NetworksScanned:    audit.NetworksScanned,
+			NetworksTested:     audit.NetworksTested,
+			HandshakesCaptured: audit.HandshakesCaptured,
+			PasswordsCracked:   audit.PasswordsCracked,
+			Networks:           networks,
+		}
+
+		config := ReportConfig{
+			AuditID:     audit.ID,
+			ClientName:  audit.ClientName,
+			TesterName:  tester,
+			CompanyLogo: req.CompanyLogo,
+		}
+
+		// Générer le PDF
+		reportPath, err := GenerateReport(reportData, config)
+		if err != nil {
+			return writeJSON(c, 500, map[string]any{"error": fmt.Sprintf("Erreur génération PDF: %v", err)})
+		}
+
+		// Mettre à jour l'audit
+		now := time.Now()
+		if p.db != nil {
+			p.db.Model(&WifiAudit{}).Where("id = ?", id).Updates(map[string]any{
+				"report_generated":    true,
+				"report_path":         reportPath,
+				"report_generated_at": now,
+			})
+		}
+
+		return writeJSON(c, 200, map[string]any{
+			"status":       "generated",
+			"report_path":  reportPath,
+			"generated_at": now,
+		})
+	})
+
+	// Télécharger un rapport
+	group.GET("/audits/{id}/report/download", func(c buffalo.Context) error {
+		id := c.Param("id")
+
+		var audit WifiAudit
+		if p.db != nil {
+			if err := p.db.First(&audit, "id = ?", id).Error; err != nil {
+				return writeJSON(c, 404, map[string]any{"error": "Audit non trouvé"})
+			}
+		}
+
+		if !audit.ReportGenerated || audit.ReportPath == "" {
+			return writeJSON(c, 404, map[string]any{"error": "Rapport non généré"})
+		}
+
+		// Servir le fichier PDF
+		c.Response().Header().Set("Content-Type", "application/pdf")
+		c.Response().Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"",
+			filepath.Base(audit.ReportPath)))
+
+		http.ServeFile(c.Response(), c.Request(), audit.ReportPath)
+		return nil
+	})
+
+	// Lister les rapports générés
+	group.GET("/reports", func(c buffalo.Context) error {
+		var audits []WifiAudit
+		if p.db != nil {
+			p.db.Where("report_generated = ?", true).Order("report_generated_at DESC").Find(&audits)
+		}
+
+		reports := make([]map[string]any, len(audits))
+		for i, a := range audits {
+			reports[i] = map[string]any{
+				"audit_id":     a.ID,
+				"client_name":  a.ClientName,
+				"report_path":  a.ReportPath,
+				"generated_at": a.ReportGeneratedAt,
+				"start_date":   a.StartDate,
+				"end_date":     a.EndDate,
+			}
+		}
+
+		return writeJSON(c, 200, map[string]any{
+			"reports": reports,
+			"count":   len(reports),
+		})
 	})
 }
 
@@ -1349,7 +2371,7 @@ func parseNmcliScan(out string, iface string) []WiFiNetwork {
 			parts[i] = strings.ReplaceAll(parts[i], placeholder, ":")
 		}
 
-		// Format: BSSID(1):SSID(1):MODE(1):CHAN(1):RATE(1):SIGNAL(1):SECURITY(1+)
+		// Format: BSSID:SSID:MODE:CHAN:RATE:SIGNAL:SECURITY
 		// Après unescape, BSSID est déjà complet (ex: "22:66:CF:57:C4:20")
 		bssid := parts[0]
 
@@ -1567,4 +2589,57 @@ func disableMonitorMode(iface string) error {
 	exec.Command(ipPath, "link", "set", iface, "up").Run()
 
 	return nil
+}
+
+// boolToInt converts a boolean to int (0 or 1) for SQL expressions
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// getWordlistsForView returns wordlists formatted for the view builder
+func getWordlistsForView() []map[string]any {
+	wordlistDirs := []string{
+		GetWordlistsDir(),
+		"/usr/share/wordlists",
+		"/usr/share/seclists/Passwords",
+	}
+
+	var wordlists []map[string]any
+	for _, dir := range wordlistDirs {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			info, _ := f.Info()
+			if info == nil {
+				continue
+			}
+			path := filepath.Join(dir, f.Name())
+
+			// Compter le nombre de lignes (estimation rapide pour gros fichiers)
+			var lineCount int64
+			if info.Size() < 200*1024*1024 {
+				if data, err := exec.Command("wc", "-l", path).Output(); err == nil {
+					fmt.Sscanf(string(data), "%d", &lineCount)
+				}
+			} else {
+				lineCount = info.Size() / 10
+			}
+
+			wordlists = append(wordlists, map[string]any{
+				"path":  path,
+				"name":  f.Name(),
+				"size":  info.Size(),
+				"lines": lineCount,
+			})
+		}
+	}
+	return wordlists
 }

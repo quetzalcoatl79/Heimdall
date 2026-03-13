@@ -201,6 +201,14 @@ func TableEmptyMessage(msg string) TableOption {
 	return func(p map[string]any) { p["emptyMessage"] = msg }
 }
 
+// tableIDKey is a special key to store the ID in props temporarily
+const tableIDKey = "__tableID__"
+
+// TableID sets the component ID for the table
+func TableID(id string) TableOption {
+	return func(p map[string]any) { p[tableIDKey] = id }
+}
+
 // TableWithOptions creates a table with options
 func TableWithOptions(columns []TableColumn, data []map[string]any, opts ...TableOption) Component {
 	props := map[string]any{
@@ -210,8 +218,15 @@ func TableWithOptions(columns []TableColumn, data []map[string]any, opts ...Tabl
 	for _, opt := range opts {
 		opt(props)
 	}
+	// Extract ID from props if set
+	id := ""
+	if idVal, ok := props[tableIDKey]; ok {
+		id = idVal.(string)
+		delete(props, tableIDKey)
+	}
 	return Component{
 		Type:  ComponentTable,
+		ID:    id,
 		Props: props,
 	}
 }
