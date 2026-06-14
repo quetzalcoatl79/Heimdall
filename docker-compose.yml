@@ -60,6 +60,26 @@ services:
     profiles:
       - debug
 
+  # Frontend (Next.js) - optional containerized frontend exposing port 3001
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: heimdall_frontend
+    ports:
+      - "3001:3001"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://host.docker.internal:3000/api/v1
+    depends_on:
+      - postgres
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:

@@ -77,6 +77,26 @@
 - Realtek RTL8812AU (ALFA AWUS036ACH)
 - Ralink RT3070 (ALFA AWUS036NH)
 
+### ⚠️ Note importante pour Ubuntu/Debian/Mint
+
+Sur les distributions **non-pentest** (Ubuntu, Debian, Linux Mint...), les outils WiFi peuvent nécessiter l'ajout du dépôt Kali pour résoudre les dépendances :
+
+```bash
+# Ajouter le dépôt Kali (optionnel, si setup.sh échoue à installer aircrack-ng)
+echo "deb http://http.kali.org/kali kali-rolling main non-free contrib" | sudo tee /etc/apt/sources.list.d/kali.list
+wget -q -O - https://archive.kali.org/archive-key.asc | sudo apt-key add -
+sudo apt-get update
+
+# Installer aircrack-ng depuis Kali
+sudo apt-get install -y -t kali-rolling aircrack-ng
+```
+
+Ou installer manuellement :
+```bash
+# Installation manuelle sur Ubuntu/Debian
+sudo apt-get install -y aircrack-ng wireless-tools iw net-tools
+```
+
 ---
 
 ## 🐧 Installation
@@ -117,6 +137,15 @@ sudo ./run_heimdall.sh --prod
 ```bash
 sudo ./stop_heimdall.sh
 ```
+
+### Wordlists
+
+Par défaut, les wordlists sont stockées dans `/opt/heimdall/wordlists` (fallback automatique vers `/tmp/heimdall-wordlists` si permissions insuffisantes).
+
+Vous pouvez surcharger l’emplacement :
+
+- `WORDLISTS_DIR=/chemin/absolu/vers/wordlists`
+- `HEIMDALL_ROOT=/chemin/vers/heimdall` (utilise `$HEIMDALL_ROOT/wordlists`)
 
 ### Installation manuelle
 

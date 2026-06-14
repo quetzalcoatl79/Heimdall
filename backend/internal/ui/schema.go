@@ -3,13 +3,13 @@ package ui
 // ViewSchema represents a complete page/view definition that the frontend will render.
 // This is similar to nano-core's template system but uses JSON instead of Django templates.
 type ViewSchema struct {
-	Title       string            `json:"title,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Icon        string            `json:"icon,omitempty"`
-	Actions     []Action          `json:"actions,omitempty"`
-	Components  []Component       `json:"components"`
-	Refresh     *RefreshConfig    `json:"refresh,omitempty"`
-	Meta        map[string]any    `json:"meta,omitempty"`
+	Title       string         `json:"title,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Icon        string         `json:"icon,omitempty"`
+	Actions     []Action       `json:"actions,omitempty"`
+	Components  []Component    `json:"components"`
+	Refresh     *RefreshConfig `json:"refresh,omitempty"`
+	Meta        map[string]any `json:"meta,omitempty"`
 }
 
 // RefreshConfig defines auto-refresh behavior
@@ -59,31 +59,31 @@ type ConfirmDialog struct {
 // ----- Component Type Constants -----
 
 const (
-	ComponentCard       = "card"
-	ComponentTable      = "table"
-	ComponentForm       = "form"
-	ComponentStats      = "stats"
-	ComponentStatItem   = "stat"
-	ComponentAlert      = "alert"
-	ComponentTabs       = "tabs"
-	ComponentTab        = "tab"
-	ComponentGrid       = "grid"
-	ComponentRow        = "row"
-	ComponentCol        = "col"
-	ComponentText       = "text"
-	ComponentHeading    = "heading"
-	ComponentBadge      = "badge"
-	ComponentProgress   = "progress"
-	ComponentList       = "list"
-	ComponentListItem   = "listItem"
-	ComponentDivider    = "divider"
-	ComponentEmpty      = "empty"
-	ComponentSkeleton   = "skeleton"
-	ComponentChart      = "chart"
-	ComponentTimeline   = "timeline"
-	ComponentCodeBlock  = "codeBlock"
-	ComponentJSON       = "json"
-	ComponentCustom     = "custom"
+	ComponentCard      = "card"
+	ComponentTable     = "table"
+	ComponentForm      = "form"
+	ComponentStats     = "stats"
+	ComponentStatItem  = "stat"
+	ComponentAlert     = "alert"
+	ComponentTabs      = "tabs"
+	ComponentTab       = "tab"
+	ComponentGrid      = "grid"
+	ComponentRow       = "row"
+	ComponentCol       = "col"
+	ComponentText      = "text"
+	ComponentHeading   = "heading"
+	ComponentBadge     = "badge"
+	ComponentProgress  = "progress"
+	ComponentList      = "list"
+	ComponentListItem  = "listItem"
+	ComponentDivider   = "divider"
+	ComponentEmpty     = "empty"
+	ComponentSkeleton  = "skeleton"
+	ComponentChart     = "chart"
+	ComponentTimeline  = "timeline"
+	ComponentCodeBlock = "codeBlock"
+	ComponentJSON      = "json"
+	ComponentCustom    = "custom"
 )
 
 // ----- Builder Helpers -----
@@ -154,13 +154,81 @@ func Table(columns []TableColumn, data []map[string]any) Component {
 
 // TableColumn defines a table column
 type TableColumn struct {
-	Key       string `json:"key"`
-	Label     string `json:"label"`
-	Sortable  bool   `json:"sortable,omitempty"`
-	Width     string `json:"width,omitempty"`
-	Align     string `json:"align,omitempty"` // left, center, right
-	Render    string `json:"render,omitempty"` // badge, date, link, etc.
-	ClassName string `json:"className,omitempty"`
+	Key        string `json:"key"`
+	Label      string `json:"label"`
+	Sortable   bool   `json:"sortable,omitempty"`
+	Filterable bool   `json:"filterable,omitempty"`
+	FilterType string `json:"filterType,omitempty"` // text, select
+	Width      string `json:"width,omitempty"`
+	Align      string `json:"align,omitempty"`  // left, center, right
+	Render     string `json:"render,omitempty"` // badge, date, datetime, relative, signal, boolean, link, code, percent
+	ClassName  string `json:"className,omitempty"`
+}
+
+// TableOption is a functional option for configuring tables
+type TableOption func(map[string]any)
+
+// TableFilterable makes the table filterable
+func TableFilterable() TableOption {
+	return func(p map[string]any) { p["filterable"] = true }
+}
+
+// TableSearchable adds a global search bar
+func TableSearchable() TableOption {
+	return func(p map[string]any) { p["searchable"] = true }
+}
+
+// TableSelectable enables row selection
+func TableSelectable() TableOption {
+	return func(p map[string]any) { p["selectable"] = true }
+}
+
+// TablePaginated enables pagination
+func TablePaginated(pageSize int) TableOption {
+	return func(p map[string]any) {
+		p["paginated"] = true
+		p["pageSize"] = pageSize
+	}
+}
+
+// TableRowKey sets the unique key for rows
+func TableRowKey(key string) TableOption {
+	return func(p map[string]any) { p["rowKey"] = key }
+}
+
+// TableEmptyMessage sets the message when no data
+func TableEmptyMessage(msg string) TableOption {
+	return func(p map[string]any) { p["emptyMessage"] = msg }
+}
+
+// tableIDKey is a special key to store the ID in props temporarily
+const tableIDKey = "__tableID__"
+
+// TableID sets the component ID for the table
+func TableID(id string) TableOption {
+	return func(p map[string]any) { p[tableIDKey] = id }
+}
+
+// TableWithOptions creates a table with options
+func TableWithOptions(columns []TableColumn, data []map[string]any, opts ...TableOption) Component {
+	props := map[string]any{
+		"columns": columns,
+		"data":    data,
+	}
+	for _, opt := range opts {
+		opt(props)
+	}
+	// Extract ID from props if set
+	id := ""
+	if idVal, ok := props[tableIDKey]; ok {
+		id = idVal.(string)
+		delete(props, tableIDKey)
+	}
+	return Component{
+		Type:  ComponentTable,
+		ID:    id,
+		Props: props,
+	}
 }
 
 // TableWithSource creates a table that fetches data from an endpoint
@@ -350,19 +418,19 @@ func CodeBlock(code, language string) Component {
 type ChartType string
 
 const (
-	ChartLine   ChartType = "line"
-	ChartBar    ChartType = "bar"
-	ChartPie    ChartType = "pie"
-	ChartArea   ChartType = "area"
-	ChartDonut  ChartType = "donut"
-	ChartRadar  ChartType = "radar"
+	ChartLine  ChartType = "line"
+	ChartBar   ChartType = "bar"
+	ChartPie   ChartType = "pie"
+	ChartArea  ChartType = "area"
+	ChartDonut ChartType = "donut"
+	ChartRadar ChartType = "radar"
 )
 
 // ChartSeries represents a data series for the chart
 type ChartSeries struct {
-	Name   string         `json:"name"`
-	Data   []float64      `json:"data"`
-	Color  string         `json:"color,omitempty"`
+	Name  string    `json:"name"`
+	Data  []float64 `json:"data"`
+	Color string    `json:"color,omitempty"`
 }
 
 // ChartConfig represents the configuration for a chart

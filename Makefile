@@ -152,6 +152,40 @@ build-frontend:
 	@echo "-- Building frontend (Next.js)"
 	cd frontend && if [ -f package.json ]; then npm run build || (echo "Frontend build failed" && exit 1); else echo "No frontend to build"; fi
 
+# ========================================
+# Plugin Management
+# ========================================
+
+# Generate plugin registry - scans /plugins and generates Go imports
+plugins-generate:
+	@echo "-- Generating plugin registry..."
+	@cd backend && go run scripts/generate_plugins.go
+
+# Scan plugins and show what would be registered
+plugins-list:
+	@echo "-- Scanning plugins..."
+	@echo ""
+	@echo "Built-in plugins (backend/internal/plugins/builtin/):"
+	@ls -1 backend/internal/plugins/builtin/ | grep -v '\.go$$' | sed 's/^/  - /'
+	@echo ""
+	@echo "External plugins (plugins/):"
+	@if [ -d plugins ]; then ls -1 plugins/ | grep -v README | sed 's/^/  - /' || echo "  (none)"; else echo "  (none)"; fi
+
+# Install a plugin from git
+plugin-install:
+	@if [ -z "$(URL)" ]; then echo "Usage: make plugin-install URL=https://github.com/user/heimdall-plugin-xxx.git NAME=xxx"; exit 1; fi
+	@if [ -z "$(NAME)" ]; then echo "Usage: make plugin-install URL=https://github.com/user/heimdall-plugin-xxx.git NAME=xxx"; exit 1; fi
+	@echo "-- Installing plugin $(NAME) from $(URL)..."
+	@mkdir -p plugins
+	@git clone $(URL) plugins/$(NAME)
+	@echo "Plugin installed. Run 'make plugins' to regenerate registry."
+
+# Full plugin rebuild: generate + build backend
+plugins: plugins-generate build-backend
+	@echo "-- Plugins updated and backend rebuilt."
+
+# ========================================
+
 # Full install: checks + deps + builds
 install: check-all check-go-deps check-fe-deps build-backend build-frontend
 

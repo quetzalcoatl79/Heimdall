@@ -40,8 +40,9 @@ apiClient.interceptors.response.use(
           });
 
           const { access_token, refresh_token } = response.data;
-          Cookies.set('access_token', access_token, { secure: true, sameSite: 'strict' });
-          Cookies.set('refresh_token', refresh_token, { secure: true, sameSite: 'strict' });
+          const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
+          Cookies.set('access_token', access_token, { secure: isSecure, sameSite: 'lax' });
+          Cookies.set('refresh_token', refresh_token, { secure: isSecure, sameSite: 'lax' });
 
           originalRequest.headers.Authorization = `Bearer ${access_token}`;
           return apiClient(originalRequest);

@@ -5,16 +5,9 @@ import { useQuery } from '@tanstack/react-query';
 import { pluginApi } from '@/lib/api/plugins';
 import { apiClient } from '@/lib/api/client';
 import { DynamicRenderer, ViewSchema } from '@/components/ui/DynamicRenderer';
-import { Plug, AlertCircle, RefreshCw } from 'lucide-react';
-import { useEffect, useState } from 'react';
-
-// Import des composants dédiés pour certains plugins
-import WifiView from '@/components/plugins/WifiView';
-
-// Map des plugins avec composant custom
-const CUSTOM_PLUGIN_VIEWS: Record<string, React.ComponentType> = {
-  wifi: WifiView,
-};
+import { getPluginComponent } from '@/lib/plugins/registry';
+import { Plug, AlertCircle } from 'lucide-react';
+import { useMemo } from 'react';
 
 export default function PluginPage() {
   const params = useParams();
@@ -29,6 +22,17 @@ export default function PluginPage() {
   const plugin = plugins?.plugins?.find(
     (p: any) => p.name.toLowerCase() === pluginKey.toLowerCase()
   );
+
+  // Résultats de scan Wi-Fi
+  const { data: scanResults, refetch: refetchScanResults } = useQuery({
+    queryKey: ['plugin', pluginKey, 'scan-results'],
+    queryFn: async () => {
+      const res = await apiClient.get(`/plugins/${pluginKey}/scan/results`);
+      return res.data;
+    },
+    enabled: pluginKey === 'wifi' && !!plugin?.enabled,
+    refetchInterval: pluginKey === 'wifi' ? 10000 : false,
+  });
 
   // Fetch view schema from plugin
   const { 
@@ -62,6 +66,33 @@ export default function PluginPage() {
     },
   });
 
+  const schemaToRender = useMemo(() => {
+    if (pluginKey !== 'wifi' || !viewSchema) {
+      return viewSchema;
+    }
+
+    const patchComponents = (components: any[]): any[] =>
+      components.map((component) => {
+        // Patche le tableau des réseaux avec les résultats du scan (polling)
+        if (component.type === 'table' && component.id === 'wifi-networks') {
+          return {
+            ...component,
+            props: {
+              ...(component.props || {}),
+              data: scanResults?.results || component.props?.data || [],
+            },
+          };
+        }
+
+        if (component.children) {
+          return { ...component, children: patchComponents(component.children) };
+        }
+        return component;
+      });
+
+    return { ...viewSchema, components: patchComponents(viewSchema.components) } as ViewSchema;
+  }, [pluginKey, viewSchema, scanResults]);
+
   const isLoading = pluginsLoading || viewLoading;
 
   if (isLoading) {
@@ -78,7 +109,7 @@ export default function PluginPage() {
         <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
         <h1 className="text-xl font-semibold text-gray-900">Plugin introuvable</h1>
         <p className="text-gray-500 mt-2">
-          Le plugin "{pluginKey}" n'existe pas ou n'est pas activé.
+          Le plugin &quot;{pluginKey}&quot; n&apos;existe pas ou n&apos;est pas activé.
         </p>
       </div>
     );
@@ -90,34 +121,35 @@ export default function PluginPage() {
         <AlertCircle className="h-12 w-12 text-yellow-500 mb-4" />
         <h1 className="text-xl font-semibold text-gray-900">Plugin désactivé</h1>
         <p className="text-gray-500 mt-2">
-          Le plugin "{plugin.name}" est actuellement désactivé.
+          Le plugin &quot;{plugin.name}&quot; est actuellement désactivé.
         </p>
       </div>
     );
   }
 
-  // Vérifier si ce plugin a un composant custom dédié
-  const CustomView = CUSTOM_PLUGIN_VIEWS[pluginKey.toLowerCase()];
-  if (CustomView) {
-    return <CustomView />;
+  // Check if plugin has a custom component registered
+  const CustomComponent = getPluginComponent(pluginKey);
+  if (CustomComponent) {
+    return <CustomComponent pluginKey={pluginKey} pluginData={plugin} />;
   }
 
   // If plugin has a view schema, render it dynamically
-  if (viewSchema) {
+  if (schemaToRender) {
     return (
-      <div className="relative">
-        {/* Refresh indicator */}
-        {viewSchema.refresh?.enabled && (
-          <div className="absolute top-0 right-0 flex items-center gap-2 text-sm text-gray-500">
-            <RefreshCw className="h-4 w-4 animate-spin-slow" />
-            Auto-refresh: {viewSchema.refresh.interval}s
-          </div>
-        )}
+      <div>
         <DynamicRenderer 
-          schema={viewSchema} 
+          schema={schemaToRender} 
+          onRefresh={() => {
+            refetchView();
+            refetchScanResults();
+          }}
           onAction={(actionId) => {
-            // TODO: Implement action handlers (refresh, export, etc.)
-            // For now, actions are defined but not yet wired to backend
+            // Actions sans endpoint sont gérées ici
+            if (actionId === 'refresh') {
+              refetchView();
+              refetchScanResults();
+            }
+            // Les autres actions avec endpoint sont gérées directement par ButtonComponent
           }}
         />
       </div>

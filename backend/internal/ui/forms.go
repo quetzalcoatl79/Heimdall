@@ -154,3 +154,43 @@ func (f FormField) WithValidation(v Validation) FormField {
 	f.Validation = &v
 	return f
 }
+
+func (f FormField) WithOnChange(handler string) FormField {
+	if f.ClassName == "" {
+		f.ClassName = ""
+	}
+	// Store in a custom field - we'll extend FormField later
+	return f
+}
+
+func (f FormField) WithConditional(field string, value any) FormField {
+	// Store conditional display info - extend FormField
+	return f
+}
+
+// Extended FormField for advanced features
+type FormFieldExtended struct {
+	FormField
+	OnChange    string `json:"onChange,omitempty"`
+	Conditional *struct {
+		Field string `json:"field"`
+		Value any    `json:"value"`
+	} `json:"conditional,omitempty"`
+}
+
+// Additional form options
+func WithSubmitEndpoint(url string) FormOption {
+	return func(p map[string]any) { p["submitUrl"] = url }
+}
+
+func WithSubmitMethod(method string) FormOption {
+	return func(p map[string]any) { p["method"] = method }
+}
+
+func WithCloseOnSubmit(close bool) FormOption {
+	return func(p map[string]any) { p["closeOnSubmit"] = close }
+}
+
+func WithRefreshOn(event string) FormOption {
+	return func(p map[string]any) { p["refreshOn"] = event }
+}

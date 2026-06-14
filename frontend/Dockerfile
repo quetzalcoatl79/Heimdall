@@ -1,17 +1,9 @@
-FROM node:22-alpine AS builder
+FROM node:22-alpine
 WORKDIR /app
-ENV NODE_ENV=development
+# Ne pas définir NODE_ENV pour permettre l'installation de toutes les deps
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps
 COPY . .
-RUN npm run build
-
-FROM node:22-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY package*.json ./
-RUN npm ci --production --legacy-peer-deps
 EXPOSE 3001
-CMD ["npm","start"]
+ENV NEXT_TELEMETRY_DISABLED=1
+CMD ["npm","run","dev"]
