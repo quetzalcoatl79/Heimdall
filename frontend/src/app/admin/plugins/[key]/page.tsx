@@ -8,6 +8,14 @@ import { DynamicRenderer, ViewSchema } from '@/components/ui/DynamicRenderer';
 import { Plug, AlertCircle, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+// Import des composants dédiés pour certains plugins
+import WifiView from '@/components/plugins/WifiView';
+
+// Map des plugins avec composant custom
+const CUSTOM_PLUGIN_VIEWS: Record<string, React.ComponentType> = {
+  wifi: WifiView,
+};
+
 export default function PluginPage() {
   const params = useParams();
   const pluginKey = params.key as string;
@@ -86,6 +94,12 @@ export default function PluginPage() {
         </p>
       </div>
     );
+  }
+
+  // Vérifier si ce plugin a un composant custom dédié
+  const CustomView = CUSTOM_PLUGIN_VIEWS[pluginKey.toLowerCase()];
+  if (CustomView) {
+    return <CustomView />;
   }
 
   // If plugin has a view schema, render it dynamically
